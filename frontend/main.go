@@ -6,16 +6,24 @@ import (
 	"html/template"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"time"
 )
 
 const maxUploadSize = 50 << 20
 
 type pageData struct {
+	Results []conversionResult
+	Error   string
+}
+
+type conversionResult struct {
+	ID           string
 	FileName     string
 	DownloadName string
 	Markdown     string
@@ -90,6 +98,13 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
       flex-wrap: wrap;
       gap: 8px;
     }
+    .secondary {
+      background: #eef2f7;
+      color: #20242a;
+    }
+    .secondary:hover {
+      background: #dfe6ef;
+    }
     .message {
       margin-top: 20px;
       padding: 12px 14px;
@@ -100,6 +115,9 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
     }
     section {
       margin-top: 24px;
+    }
+    .result {
+      margin-top: 18px;
     }
     .result-head {
       display: flex;
@@ -112,6 +130,11 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
       margin: 0;
       font-size: 18px;
       letter-spacing: 0;
+    }
+    .file-error {
+      margin-top: 10px;
+      color: #a4262c;
+      font-size: 14px;
     }
     textarea {
       box-sizing: border-box;
@@ -137,6 +160,13 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
         background: #181d23;
         border-color: #313943;
       }
+      .secondary {
+        background: #2a323d;
+        color: #eef1f5;
+      }
+      .secondary:hover {
+        background: #354150;
+      }
       input[type="file"] {
         background: #14191f;
         border-color: #4b5563;
@@ -157,46 +187,75 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
     </header>
 
     <form action="/convert" method="post" enctype="multipart/form-data">
-      <input name="file" type="file" required>
+      <input name="files" type="file" multiple required>
       <button type="submit">Convert</button>
     </form>
 
     {{if .Error}}<div class="message">{{.Error}}</div>{{end}}
 
-    {{if .Markdown}}
+    {{if .Results}}
     <section>
       <div class="result-head">
-        <h2>{{.FileName}}</h2>
+        <h2>Results</h2>
         <div class="actions">
-          <button type="button" id="copy-button">Copy</button>
-          <button type="button" id="download-button" data-filename="{{.DownloadName}}">Save</button>
+          <button type="button" class="secondary" id="copy-all-button">Copy all</button>
         </div>
       </div>
-      <textarea id="markdown-output" readonly>{{.Markdown}}</textarea>
+      {{range .Results}}
+      <div class="result">
+        <div class="result-head">
+          <h2>{{.FileName}}</h2>
+          {{if .Markdown}}
+          <div class="actions">
+            <button type="button" class="copy-button" data-target="{{.ID}}">Copy</button>
+            <button type="button" class="download-button" data-target="{{.ID}}" data-filename="{{.DownloadName}}">Save</button>
+          </div>
+          {{end}}
+        </div>
+        {{if .Error}}<div class="file-error">{{.Error}}</div>{{end}}
+        {{if .Markdown}}<textarea id="{{.ID}}" readonly>{{.Markdown}}</textarea>{{end}}
+      </div>
+      {{end}}
     </section>
     {{end}}
   </main>
   <script>
-    const output = document.getElementById("markdown-output");
-    const copyButton = document.getElementById("copy-button");
-    const downloadButton = document.getElementById("download-button");
-
-    if (output && copyButton) {
-      copyButton.addEventListener("click", async () => {
-        await navigator.clipboard.writeText(output.value);
-        copyButton.textContent = "Copied";
-        setTimeout(() => copyButton.textContent = "Copy", 1200);
-      });
+    function outputFor(button) {
+      return document.getElementById(button.dataset.target);
     }
 
-    if (output && downloadButton) {
-      downloadButton.addEventListener("click", () => {
+    document.querySelectorAll(".copy-button").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const output = outputFor(button);
+        if (!output) return;
+        await navigator.clipboard.writeText(output.value);
+        button.textContent = "Copied";
+        setTimeout(() => button.textContent = "Copy", 1200);
+      });
+    });
+
+    document.querySelectorAll(".download-button").forEach((button) => {
+      button.addEventListener("click", () => {
+        const output = outputFor(button);
+        if (!output) return;
         const file = new Blob([output.value], { type: "text/markdown;charset=utf-8" });
         const link = document.createElement("a");
         link.href = URL.createObjectURL(file);
-        link.download = downloadButton.dataset.filename || "document.md";
+        link.download = button.dataset.filename || "document.md";
         link.click();
         URL.revokeObjectURL(link.href);
+      });
+    });
+
+    const copyAllButton = document.getElementById("copy-all-button");
+    if (copyAllButton) {
+      copyAllButton.addEventListener("click", async () => {
+        const allMarkdown = Array.from(document.querySelectorAll("textarea"))
+          .map((output) => output.value)
+          .join("\n\n");
+        await navigator.clipboard.writeText(allMarkdown);
+        copyAllButton.textContent = "Copied";
+        setTimeout(() => copyAllButton.textContent = "Copy all", 1200);
       });
     }
   </script>
@@ -234,27 +293,52 @@ func convert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	file, header, err := r.FormFile("file")
-	if err != nil {
-		render(pageData{Error: "Choose a file to convert."})(w, r)
+	headers := r.MultipartForm.File["files"]
+	if len(headers) == 0 {
+		render(pageData{Error: "Choose at least one file to convert."})(w, r)
 		return
+	}
+
+	results := make([]conversionResult, 0, len(headers))
+	for index, header := range headers {
+		results = append(results, convertFile(r.Context(), header, index))
+	}
+
+	render(pageData{Results: results})(w, r)
+}
+
+func convertFile(requestContext context.Context, header *multipart.FileHeader, index int) conversionResult {
+	result := conversionResult{
+		ID:           "result-" + strconv.Itoa(index),
+		FileName:     header.Filename,
+		DownloadName: markdownFileName(header.Filename),
+	}
+
+	file, err := header.Open()
+	if err != nil {
+		result.Error = "Could not open the uploaded file."
+		return result
 	}
 	defer file.Close()
 
 	tmp, err := os.CreateTemp("", "markitdown-*"+filepath.Ext(header.Filename))
 	if err != nil {
-		render(pageData{Error: "Could not prepare the uploaded file."})(w, r)
-		return
+		result.Error = "Could not prepare the uploaded file."
+		return result
 	}
 	defer os.Remove(tmp.Name())
-	defer tmp.Close()
 
 	if _, err := io.Copy(tmp, file); err != nil {
-		render(pageData{Error: "Could not read the uploaded file."})(w, r)
-		return
+		tmp.Close()
+		result.Error = "Could not read the uploaded file."
+		return result
+	}
+	if err := tmp.Close(); err != nil {
+		result.Error = "Could not finish reading the uploaded file."
+		return result
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(requestContext, 2*time.Minute)
 	defer cancel()
 
 	var stderr bytes.Buffer
@@ -262,19 +346,15 @@ func convert(w http.ResponseWriter, r *http.Request) {
 	cmd.Stderr = &stderr
 	output, err := cmd.Output()
 	if err != nil {
-		message := "Conversion failed."
+		result.Error = "Conversion failed."
 		if stderr.Len() > 0 {
-			message += " " + stderr.String()
+			result.Error += " " + stderr.String()
 		}
-		render(pageData{FileName: header.Filename, Error: message})(w, r)
-		return
+		return result
 	}
 
-	render(pageData{
-		FileName:     header.Filename,
-		DownloadName: markdownFileName(header.Filename),
-		Markdown:     string(output),
-	})(w, r)
+	result.Markdown = string(output)
+	return result
 }
 
 func markdownFileName(name string) string {
