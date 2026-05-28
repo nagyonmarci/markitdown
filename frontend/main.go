@@ -1,8 +1,10 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
+	"fmt"
 	"html/template"
 	"io"
 	"log"
@@ -12,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -188,7 +191,10 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
 
     <form action="/convert" method="post" enctype="multipart/form-data">
       <input name="files" type="file" multiple required>
-      <button type="submit">Convert</button>
+      <div class="actions">
+        <button type="submit">Convert</button>
+        <button type="submit" class="secondary" formaction="/convert.zip">Download ZIP</button>
+      </div>
     </form>
 
     {{if .Error}}<div class="message">{{.Error}}</div>{{end}}
@@ -266,6 +272,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", render(pageData{}))
 	mux.HandleFunc("POST /convert", convert)
+	mux.HandleFunc("POST /convert.zip", convertZip)
 
 	server := &http.Server{
 		Addr:              ":8080",
@@ -287,15 +294,8 @@ func render(data pageData) http.HandlerFunc {
 }
 
 func convert(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
-	if err := r.ParseMultipartForm(maxUploadSize); err != nil {
-		render(pageData{Error: "Upload failed or file is larger than 50 MB."})(w, r)
-		return
-	}
-
-	headers := r.MultipartForm.File["files"]
-	if len(headers) == 0 {
-		render(pageData{Error: "Choose at least one file to convert."})(w, r)
+	headers, ok := uploadedFiles(w, r)
+	if !ok {
 		return
 	}
 
@@ -305,6 +305,77 @@ func convert(w http.ResponseWriter, r *http.Request) {
 	}
 
 	render(pageData{Results: results})(w, r)
+}
+
+func convertZip(w http.ResponseWriter, r *http.Request) {
+	headers, ok := uploadedFiles(w, r)
+	if !ok {
+		return
+	}
+
+	var archive bytes.Buffer
+	zipWriter := zip.NewWriter(&archive)
+	usedNames := map[string]int{}
+	var errors strings.Builder
+
+	for index, header := range headers {
+		result := convertFile(r.Context(), header, index)
+		if result.Error != "" {
+			fmt.Fprintf(&errors, "%s: %s\n", result.FileName, result.Error)
+			continue
+		}
+
+		entry, err := zipWriter.Create(uniqueFileName(result.DownloadName, usedNames))
+		if err != nil {
+			http.Error(w, "Could not create ZIP archive.", http.StatusInternalServerError)
+			return
+		}
+		if _, err := entry.Write([]byte(result.Markdown)); err != nil {
+			http.Error(w, "Could not write ZIP archive.", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	if errors.Len() > 0 {
+		entry, err := zipWriter.Create("errors.txt")
+		if err != nil {
+			http.Error(w, "Could not create ZIP archive.", http.StatusInternalServerError)
+			return
+		}
+		if _, err := entry.Write([]byte(errors.String())); err != nil {
+			http.Error(w, "Could not write ZIP archive.", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	if err := zipWriter.Close(); err != nil {
+		http.Error(w, "Could not finish ZIP archive.", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", `attachment; filename="markitdown-results.zip"`)
+	w.Header().Set("Content-Length", strconv.Itoa(archive.Len()))
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write(archive.Bytes()); err != nil {
+		log.Printf("write ZIP response: %v", err)
+	}
+}
+
+func uploadedFiles(w http.ResponseWriter, r *http.Request) ([]*multipart.FileHeader, bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+	if err := r.ParseMultipartForm(maxUploadSize); err != nil {
+		render(pageData{Error: "Upload failed or files are larger than 50 MB."})(w, r)
+		return nil, false
+	}
+
+	headers := r.MultipartForm.File["files"]
+	if len(headers) == 0 {
+		render(pageData{Error: "Choose at least one file to convert."})(w, r)
+		return nil, false
+	}
+
+	return headers, true
 }
 
 func convertFile(requestContext context.Context, header *multipart.FileHeader, index int) conversionResult {
@@ -364,4 +435,15 @@ func markdownFileName(name string) string {
 		return base + ".md"
 	}
 	return base[:len(base)-len(ext)] + ".md"
+}
+
+func uniqueFileName(name string, used map[string]int) string {
+	used[name]++
+	if used[name] == 1 {
+		return name
+	}
+
+	ext := filepath.Ext(name)
+	base := strings.TrimSuffix(name, ext)
+	return fmt.Sprintf("%s-%d%s", base, used[name], ext)
 }
