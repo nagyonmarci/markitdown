@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const maxUploadSize = 50 << 20
@@ -690,12 +691,29 @@ func isYouTubeURL(rawURL string) bool {
 }
 
 func safeFileName(name string) string {
-	name = strings.TrimSpace(name)
-	name = strings.NewReplacer("/", "-", "\\", "-", ":", "-", "*", "-", "?", "", "\"", "", "<", "", ">", "", "|", "-").Replace(name)
-	if name == "" {
+	var builder strings.Builder
+	lastWasSeparator := false
+
+	for _, char := range strings.TrimSpace(name) {
+		if unicode.IsLetter(char) || unicode.IsDigit(char) {
+			builder.WriteRune(char)
+			lastWasSeparator = false
+			continue
+		}
+
+		if unicode.IsSpace(char) || char == '-' || char == '_' {
+			if builder.Len() > 0 && !lastWasSeparator {
+				builder.WriteRune('-')
+				lastWasSeparator = true
+			}
+		}
+	}
+
+	cleaned := strings.Trim(builder.String(), "-")
+	if cleaned == "" {
 		return "youtube"
 	}
-	return name
+	return cleaned
 }
 
 func formatDuration(seconds int) string {
