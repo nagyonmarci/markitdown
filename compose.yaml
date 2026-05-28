@@ -5,3 +5,21 @@ services:
       dockerfile: frontend/Dockerfile
     ports:
       - "8088:8080"
+    environment:
+      - XDG_CACHE_HOME=/tmp/cache
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 2g
+    pids_limit: 512
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8080), 2).close()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

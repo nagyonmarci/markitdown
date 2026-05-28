@@ -8,9 +8,13 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   lint:
-    name: Lint & type check
+    name: Lint (pre-commit)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,13 +24,45 @@ jobs:
       - name: Run pre-commit hooks
         uses: pre-commit/action@v3.0.1
 
-  test:
-    name: Test (Python ${{ matrix.python-version }})
+  typecheck:
+    name: Typecheck (${{ matrix.package }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        package:
+          - markitdown
+          - markitdown-ocr
+          - markitdown-mcp
+          - markitdown-sample-plugin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Hatch
+        run: pipx install hatch
+      # Report-only: surfaces mypy annotations without blocking while
+      # pre-existing type debt is cleared. Remove continue-on-error to gate.
+      - name: Type check
+        continue-on-error: true
+        run: cd packages/${{ matrix.package }} && hatch run types:check
+
+  test:
+    name: Test (${{ matrix.package }} / py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    # markitdown-ocr has a pre-existing failing test (test_pdf_multipage);
+    # its leg is non-blocking until triaged. Flip optional to false to gate.
+    continue-on-error: ${{ matrix.optional }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { package: markitdown, python-version: "3.10", optional: false }
+          - { package: markitdown, python-version: "3.11", optional: false }
+          - { package: markitdown, python-version: "3.12", optional: false }
+          - { package: markitdown-ocr, python-version: "3.12", optional: true }
+          - { package: markitdown-sample-plugin, python-version: "3.12", optional: false }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -35,7 +71,7 @@ jobs:
       - name: Install Hatch
         run: pipx install hatch
       - name: Run tests
-        run: cd packages/markitdown && hatch test
+        run: cd packages/${{ matrix.package }} && hatch test
 
   gitleaks:
     name: Secret detection
@@ -104,9 +140,9 @@ jobs:
       - uses: bridgecrewio/checkov-action@v12
         with:
           file: compose.yaml
-          output_format: sarif
-          output_file_path: checkov.sarif
-          soft_fail: true
+          output_format: cli,sarif
+          output_file_path: console,checkov.sarif
+          soft_fail: false
       - uses: github/codeql-action/upload-sarif@v3
         if: always() && hashFiles('checkov.sarif') != ''
         with:
@@ -121,7 +157,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build Docker image
         run: docker build -t markitdown:ci .
-      - uses: aquasecurity/trivy-action@v0.36.0
+      - name: Trivy report (all HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: markitdown:ci
           format: sarif
@@ -132,6 +169,14 @@ jobs:
         if: always()
         with:
           sarif_file: trivy.sarif
+      - name: Trivy gate (fixable HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: markitdown:ci
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
 
   dependency-review:
     name: Dependency review
@@ -144,11 +189,24 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/dependency-review-action@v4
 
+  pip-audit:
+    name: Dependency audit (pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package (matches the shipped Docker image)
+        run: pip install ./packages/markitdown[all]
+      - name: Audit installed dependencies (report-only)
+        run: pipx run pip-audit --strict || true
+
   security-summary:
     name: Security summary
     runs-on: ubuntu-latest
     if: always() && github.event_name == 'pull_request'
-    needs: [gitleaks, codeql, sast-semgrep, dockerfile-lint, iac-checkov, image-scan, dependency-review]
+    needs: [gitleaks, codeql, sast-semgrep, dockerfile-lint, iac-checkov, image-scan, dependency-review, pip-audit]
     permissions:
       pull-requests: write
     steps:
@@ -178,3 +236,4 @@ jobs:
             | Checkov IaC | `${{ needs.iac-checkov.result }}` |
             | Trivy image scan | `${{ needs.image-scan.result }}` |
             | Dependency review | `${{ needs.dependency-review.result }}` |
+            | pip-audit (Python SCA) | `${{ needs.pip-audit.result }}` |

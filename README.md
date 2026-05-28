@@ -358,20 +358,21 @@ Three GitHub Actions workflows cover the full software delivery lifecycle:
 
 ### Continuous Integration (`ci.yml`)
 
-The CI workflow uses a **parallel fan-out** design — jobs are independent and run concurrently, minimising wall-clock time while maximising coverage.
+The CI workflow uses a **parallel fan-out** design — jobs are independent and run concurrently, minimising wall-clock time while maximising coverage. A `concurrency` group cancels superseded in-progress runs on the same pull request, so only the latest commit is scanned.
 
 #### Code quality
 
 | Job | Tool | What it checks |
 |---|---|---|
 | `lint` | [pre-commit](https://pre-commit.com/) + [Black](https://github.com/psf/black) | Consistent code formatting across the entire codebase |
-| `test` | [Hatch](https://hatch.pypa.io/) + pytest | Functional correctness on Python 3.10, 3.11, and 3.12 in parallel |
+| `typecheck` | [mypy](https://mypy-lang.org/) via [Hatch](https://hatch.pypa.io/) | Static type checking for all four packages (report-only while pre-existing type debt is cleared) |
+| `test` | [Hatch](https://hatch.pypa.io/) + pytest | Functional correctness across packages on Python 3.10–3.12 |
 
-The test matrix runs each Python version as a separate job, so a version-specific regression is caught precisely instead of masking a passing version.
+The test matrix fans out per package and Python version: `markitdown` is tested on 3.10, 3.11, and 3.12 and `markitdown-sample-plugin` on 3.12 — each as a separate gating job, so a version- or package-specific regression is pinpointed precisely. `markitdown-ocr` runs as a non-blocking leg until a pre-existing test failure (`test_pdf_multipage`) is triaged.
 
 #### Security scanning
 
-Five independent security lenses run in parallel on every push:
+Six independent security lenses run in parallel on every push:
 
 **1. Secret detection — Gitleaks**
 
@@ -392,16 +393,21 @@ Both `Dockerfile` (Python runtime image) and `frontend/Dockerfile` (multi-stage 
 
 **4. Infrastructure-as-Code scanning — Checkov**
 
-[Checkov](https://www.checkov.io/) (Prisma Cloud) scans `compose.yaml` for Docker Compose misconfigurations: containers running as root, missing health checks, exposed secrets, insecure bind mounts, and writable container filesystems. Results are uploaded as SARIF to the Security tab.
+[Checkov](https://www.checkov.io/) (Prisma Cloud) scans `compose.yaml` for Docker Compose misconfigurations: containers running as root, missing health checks, exposed secrets, insecure bind mounts, and writable container filesystems. The scan **fails the build** on any finding (`soft_fail: false`), and `compose.yaml` is hardened to match: a `read_only` root filesystem with a `/tmp` tmpfs, `cap_drop: ALL`, `no-new-privileges`, resource limits, and a healthcheck. Results are also uploaded as SARIF to the Security tab.
 
 **5. Container image vulnerability scan — Trivy**
 
-The Docker image is built from source and scanned with [Trivy](https://github.com/aquasecurity/trivy) for CVEs at `HIGH` and `CRITICAL` severity. The scan runs against the **built artifact**, not just the Dockerfile, which catches vulnerabilities introduced by transitive Python or system dependencies that static analysis cannot see.
+The Docker image is built from source and scanned with [Trivy](https://github.com/aquasecurity/trivy) for CVEs at `HIGH` and `CRITICAL` severity. The scan runs against the **built artifact**, not just the Dockerfile, which catches vulnerabilities introduced by transitive Python or system dependencies that static analysis cannot see. The complete result set is uploaded as SARIF, and a second gate step **fails the build** on *fixable* HIGH/CRITICAL CVEs (`ignore-unfixed: true`) — so an actionable, patchable vulnerability blocks merge while an unpatched upstream advisory doesn't permanently wedge the pipeline.
+
+**6. Python dependency audit — pip-audit**
+
+[pip-audit](https://github.com/pypa/pip-audit) resolves the installed dependency tree (matching what ships in the Docker image) and checks it against the [PyPI Advisory Database](https://github.com/pypa/advisory-database). It runs report-only for now, complementing Trivy with Python-package-level CVE visibility that an image scan attributes to the OS layer.
 
 #### PR gates
 
 - **Dependency review** — flags newly introduced dependencies with known CVEs or incompatible licenses on every pull request, before merge.
 - **Security summary** — a bot posts a **sticky comment** on every PR with a consolidated table of all security job results. The comment is updated in-place on each new push, so reviewers always see the current state without scrolling through history.
+- **Code ownership** — a [`CODEOWNERS`](.github/CODEOWNERS) file routes review requests for the CI/CD workflows, Dockerfiles, and `compose.yaml` to their owners, so changes to security-critical infrastructure always get a designated reviewer.
 
 ### Release & Supply Chain Security (`release.yml`)
 
@@ -452,7 +458,7 @@ This fulfils emerging regulatory requirements (e.g. US Executive Order 14028) th
 
 #### Post-publish vulnerability scan
 
-After the image is pushed, Trivy scans the **published registry image** (not the local build cache) for `HIGH` and `CRITICAL` CVEs. This catches any discrepancy between the local build environment and what actually landed in the registry. Results are uploaded as SARIF to the Security tab.
+After the image is pushed, Trivy scans the **published registry image** (not the local build cache) for `HIGH` and `CRITICAL` CVEs. This catches any discrepancy between the local build environment and what actually landed in the registry. Results are uploaded as SARIF to the Security tab, and — mirroring CI — a gate step fails the release on *fixable* HIGH/CRITICAL findings (`ignore-unfixed: true`).
 
 #### GitHub Releases
 
@@ -535,6 +541,8 @@ You can help by looking at issues or helping review PRs. Any issue or PR is welc
   hatch test
   ```
 
+- Type-check a package with `hatch run types:check` (run inside any `packages/<name>` directory).
+- Other packages ship their own suites — e.g. `cd packages/markitdown-sample-plugin && hatch test`.
 - Run pre-commit checks before submitting a PR: `pre-commit run --all-files`
 
 ### Security Considerations

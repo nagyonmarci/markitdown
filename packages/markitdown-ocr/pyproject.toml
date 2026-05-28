@@ -52,6 +52,14 @@ Source = "https://github.com/microsoft/markitdown"
 [tool.hatch.version]
 path = "src/markitdown_ocr/__about__.py"
 
+[tool.hatch.envs.types]
+features = ["llm"]
+extra-dependencies = [
+  "mypy>=1.0.0",
+]
+[tool.hatch.envs.types.scripts]
+check = "mypy --install-types --non-interactive --ignore-missing-imports {args:src/markitdown_ocr tests}"
+
 # CRITICAL: Plugin entry point - MarkItDown will discover this plugin through this entry point
 [project.entry-points."markitdown.plugin"]
 ocr = "markitdown_ocr"

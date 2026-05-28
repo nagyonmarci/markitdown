@@ -1,0 +1,8 @@
+# Default owners for everything in the repository
+*                       @nagyonmarci
+
+# CI/CD and security configuration
+/.github/               @nagyonmarci
+/Dockerfile             @nagyonmarci
+/frontend/Dockerfile    @nagyonmarci
+/compose.yaml           @nagyonmarci
