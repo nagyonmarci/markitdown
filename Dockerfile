@@ -1,11 +1,13 @@
-FROM python:3.13-slim-bullseye
+FROM python:3.13-slim-trixie
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV EXIFTOOL_PATH=/usr/bin/exiftool
 ENV FFMPEG_PATH=/usr/bin/ffmpeg
 
-# Runtime dependency
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Runtime dependency. apt-get upgrade clears fixable OS-package CVEs so the
+# Trivy gate (--ignore-unfixed HIGH,CRITICAL) stays green.
+# hadolint ignore=DL3005
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     ffmpeg \
     exiftool
 

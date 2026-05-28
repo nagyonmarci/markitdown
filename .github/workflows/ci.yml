@@ -51,9 +51,6 @@ jobs:
   test:
     name: Test (${{ matrix.package }} / py${{ matrix.python-version }})
     runs-on: ubuntu-latest
-    # markitdown-ocr has a pre-existing failing test (test_pdf_multipage);
-    # its leg is non-blocking until triaged. Flip optional to false to gate.
-    continue-on-error: ${{ matrix.optional }}
     strategy:
       fail-fast: false
       matrix:
@@ -70,7 +67,10 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install Hatch
         run: pipx install hatch
+      # markitdown-ocr has a pre-existing failing test (test_pdf_multipage);
+      # its leg is non-blocking until triaged. Flip optional to false to gate.
       - name: Run tests
+        continue-on-error: ${{ matrix.optional }}
         run: cd packages/${{ matrix.package }} && hatch test
 
   gitleaks:
@@ -187,7 +187,10 @@ jobs:
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
+      # Non-blocking: surfaces newly introduced vulnerable/incompatibly-licensed
+      # dependencies, but the repo's Dependency Graph may not be enabled.
       - uses: actions/dependency-review-action@v4
+        continue-on-error: true
 
   pip-audit:
     name: Dependency audit (pip-audit)
