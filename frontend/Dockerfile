@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 COPY packages/markitdown /app/packages/markitdown
 RUN pip --no-cache-dir install /app/packages/markitdown[all]
+RUN pip --no-cache-dir install yt-dlp
 
 COPY --from=builder /markitdown-frontend /usr/local/bin/markitdown-frontend
 

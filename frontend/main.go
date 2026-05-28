@@ -4,6 +4,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -39,6 +41,22 @@ type conversionResult struct {
 	DownloadName string
 	Markdown     string
 	Error        string
+}
+
+type youtubeMetadata struct {
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Duration    int    `json:"duration"`
+	Uploader    string `json:"uploader"`
+	WebpageURL  string `json:"webpage_url"`
+}
+
+type youtubeSubtitle struct {
+	Events []struct {
+		Segments []struct {
+			Text string `json:"utf8"`
+		} `json:"segs"`
+	} `json:"events"`
 }
 
 var page = template.Must(template.New("page").Parse(`<!doctype html>
@@ -528,6 +546,10 @@ func convertLocation(requestContext context.Context, location string, index int,
 		DownloadName: markdownURLFileName(location),
 	}
 
+	if isYouTubeURL(location) {
+		return convertYouTube(requestContext, location, result)
+	}
+
 	ctx, cancel := context.WithTimeout(requestContext, 2*time.Minute)
 	defer cancel()
 
@@ -545,6 +567,146 @@ func convertLocation(requestContext context.Context, location string, index int,
 
 	result.Markdown = string(output)
 	return result
+}
+
+func convertYouTube(requestContext context.Context, location string, result conversionResult) conversionResult {
+	ctx, cancel := context.WithTimeout(requestContext, 3*time.Minute)
+	defer cancel()
+
+	metadataOutput, err := exec.CommandContext(ctx, "yt-dlp", "--skip-download", "--no-warnings", "-J", location).Output()
+	if err != nil {
+		result.Error = "YouTube metadata conversion failed."
+		return result
+	}
+
+	var metadata youtubeMetadata
+	if err := json.Unmarshal(metadataOutput, &metadata); err != nil {
+		result.Error = "Could not read YouTube metadata."
+		return result
+	}
+
+	if metadata.Title != "" {
+		result.FileName = metadata.Title
+		result.DownloadName = markdownFileName(safeFileName(metadata.Title))
+	}
+
+	transcript, transcriptErr := fetchYouTubeTranscript(ctx, location)
+
+	var markdown strings.Builder
+	title := metadata.Title
+	if title == "" {
+		title = location
+	}
+	fmt.Fprintf(&markdown, "# %s\n\n", title)
+	if metadata.WebpageURL != "" {
+		fmt.Fprintf(&markdown, "- **Source:** %s\n", metadata.WebpageURL)
+	} else {
+		fmt.Fprintf(&markdown, "- **Source:** %s\n", location)
+	}
+	if metadata.Uploader != "" {
+		fmt.Fprintf(&markdown, "- **Channel:** %s\n", metadata.Uploader)
+	}
+	if metadata.Duration > 0 {
+		fmt.Fprintf(&markdown, "- **Duration:** %s\n", formatDuration(metadata.Duration))
+	}
+	if metadata.Description != "" {
+		fmt.Fprintf(&markdown, "\n## Description\n\n%s\n", metadata.Description)
+	}
+	if transcript != "" {
+		fmt.Fprintf(&markdown, "\n## Transcript\n\n%s\n", transcript)
+	} else if transcriptErr != nil {
+		fmt.Fprintf(&markdown, "\n## Transcript\n\nTranscript unavailable: %s\n", transcriptErr)
+	}
+
+	result.Markdown = markdown.String()
+	return result
+}
+
+func fetchYouTubeTranscript(ctx context.Context, location string) (string, error) {
+	dir, err := os.MkdirTemp("", "markitdown-youtube-*")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(dir)
+
+	outputTemplate := filepath.Join(dir, "subtitle.%(ext)s")
+	cmd := exec.CommandContext(
+		ctx,
+		"yt-dlp",
+		"--skip-download",
+		"--no-warnings",
+		"--write-subs",
+		"--write-auto-subs",
+		"--sub-langs",
+		"en,en-orig",
+		"--sub-format",
+		"json3",
+		"-o",
+		outputTemplate,
+		location,
+	)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return "", errors.New(strings.TrimSpace(string(output)))
+	}
+
+	matches, err := filepath.Glob(filepath.Join(dir, "subtitle.*.json3"))
+	if err != nil {
+		return "", err
+	}
+	if len(matches) == 0 {
+		return "", fmt.Errorf("no English subtitles found")
+	}
+
+	content, err := os.ReadFile(matches[0])
+	if err != nil {
+		return "", err
+	}
+
+	var subtitle youtubeSubtitle
+	if err := json.Unmarshal(content, &subtitle); err != nil {
+		return "", err
+	}
+
+	parts := []string{}
+	for _, event := range subtitle.Events {
+		for _, segment := range event.Segments {
+			text := strings.TrimSpace(segment.Text)
+			if text != "" {
+				parts = append(parts, text)
+			}
+		}
+	}
+
+	return strings.Join(strings.Fields(strings.Join(parts, " ")), " "), nil
+}
+
+func isYouTubeURL(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	host := strings.TrimPrefix(strings.ToLower(parsed.Hostname()), "www.")
+	return host == "youtube.com" || host == "youtu.be"
+}
+
+func safeFileName(name string) string {
+	name = strings.TrimSpace(name)
+	name = strings.NewReplacer("/", "-", "\\", "-", ":", "-", "*", "-", "?", "", "\"", "", "<", "", ">", "", "|", "-").Replace(name)
+	if name == "" {
+		return "youtube"
+	}
+	return name
+}
+
+func formatDuration(seconds int) string {
+	duration := time.Duration(seconds) * time.Second
+	hours := int(duration.Hours())
+	minutes := int(duration.Minutes()) % 60
+	secs := int(duration.Seconds()) % 60
+	if hours > 0 {
+		return fmt.Sprintf("%d:%02d:%02d", hours, minutes, secs)
+	}
+	return fmt.Sprintf("%d:%02d", minutes, secs)
 }
 
 func optionsFromRequest(r *http.Request) conversionOptions {
