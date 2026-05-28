@@ -1,0 +1,184 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint & type check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run pre-commit hooks
+        uses: pre-commit/action@v3.0.1
+      - name: Install Hatch
+        run: pipx install hatch
+      - name: Run mypy
+        run: cd packages/markitdown && hatch run types:check
+
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install Hatch
+        run: pipx install hatch
+      - name: Run tests
+        run: cd packages/markitdown && hatch test
+
+  gitleaks:
+    name: Secret detection
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  codeql:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, go]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+      - uses: github/codeql-action/autobuild@v3
+      - uses: github/codeql-action/analyze@v3
+
+  sast-semgrep:
+    name: SAST (Semgrep)
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: semgrep/semgrep-action@v1
+        with:
+          config: >-
+            p/python
+            p/owasp-top-ten
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+  dockerfile-lint:
+    name: Dockerfile lint (${{ matrix.dockerfile }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dockerfile: [Dockerfile, frontend/Dockerfile]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: ${{ matrix.dockerfile }}
+
+  iac-checkov:
+    name: IaC scan (Checkov)
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bridgecrewio/checkov-action@v12
+        with:
+          file: compose.yaml
+          framework: docker_compose
+          output_format: sarif
+          output_file_path: checkov.sarif
+          soft_fail: true
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov.sarif
+
+  image-scan:
+    name: Image vulnerability scan
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image
+        run: docker build -t markitdown:ci .
+      - uses: aquasecurity/trivy-action@0.30.0
+        with:
+          image-ref: markitdown:ci
+          format: sarif
+          output: trivy.sarif
+          severity: HIGH,CRITICAL
+          exit-code: "0"
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy.sarif
+
+  dependency-review:
+    name: Dependency review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+
+  security-summary:
+    name: Security summary
+    runs-on: ubuntu-latest
+    if: always() && github.event_name == 'pull_request'
+    needs: [gitleaks, codeql, sast-semgrep, dockerfile-lint, iac-checkov, image-scan, dependency-review]
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Find existing summary comment
+        id: find-comment
+        uses: peter-evans/find-comment@v3
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: github-actions[bot]
+          body-includes: "<!-- security-summary -->"
+      - name: Create or update summary comment
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.find-comment.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          edit-mode: replace
+          body: |
+            <!-- security-summary -->
+            ## Security scan results
+
+            | Check | Result |
+            |---|---|
+            | Gitleaks (secrets) | `${{ needs.gitleaks.result }}` |
+            | CodeQL (Python + Go) | `${{ needs.codeql.result }}` |
+            | Semgrep SAST | `${{ needs.sast-semgrep.result }}` |
+            | Dockerfile lint | `${{ needs.dockerfile-lint.result }}` |
+            | Checkov IaC | `${{ needs.iac-checkov.result }}` |
+            | Trivy image scan | `${{ needs.image-scan.result }}` |
+            | Dependency review | `${{ needs.dependency-review.result }}` |
