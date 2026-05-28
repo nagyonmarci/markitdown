@@ -26,6 +26,13 @@ type pageData struct {
 	Error   string
 }
 
+type conversionOptions struct {
+	UsePlugins   bool
+	Extension    string
+	Charset      string
+	KeepDataURIs bool
+}
+
 type conversionResult struct {
 	ID           string
 	FileName     string
@@ -83,7 +90,7 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
       border-radius: 6px;
       background: #fafbfc;
     }
-    input[type="url"] {
+    input[type="text"], input[type="url"] {
       box-sizing: border-box;
       min-height: 44px;
       padding: 0 12px;
@@ -92,6 +99,32 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
       background: #fafbfc;
       color: inherit;
       font: inherit;
+    }
+    label {
+      display: grid;
+      gap: 6px;
+      color: #404852;
+      font-size: 14px;
+    }
+    label.checkbox {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    details {
+      display: grid;
+      gap: 12px;
+    }
+    summary {
+      cursor: pointer;
+      color: #404852;
+      font-weight: 600;
+    }
+    .advanced {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      margin-top: 12px;
     }
     button {
       justify-self: start;
@@ -185,9 +218,12 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
         background: #14191f;
         border-color: #4b5563;
       }
-      input[type="url"] {
+      input[type="text"], input[type="url"] {
         background: #14191f;
         border-color: #4b5563;
+      }
+      label, summary {
+        color: #c6cdd6;
       }
       .message {
         background: #3b1518;
@@ -206,6 +242,15 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
 
     <form action="/convert" method="post" enctype="multipart/form-data">
       <input name="files" type="file" multiple required>
+      <details>
+        <summary>Advanced options</summary>
+        <div class="advanced">
+          <label>Extension hint<input name="extension" type="text" placeholder="pdf"></label>
+          <label>Charset<input name="charset" type="text" placeholder="utf-8"></label>
+          <label class="checkbox"><input name="use_plugins" type="checkbox" value="1"> Use plugins</label>
+          <label class="checkbox"><input name="keep_data_uris" type="checkbox" value="1"> Keep data URIs</label>
+        </div>
+      </details>
       <div class="actions">
         <button type="submit">Convert</button>
         <button type="submit" class="secondary" formaction="/convert.zip">Download ZIP</button>
@@ -214,6 +259,15 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
 
     <form action="/convert-url" method="post">
       <input name="url" type="url" placeholder="https://example.com/document.html" required>
+      <details>
+        <summary>Advanced options</summary>
+        <div class="advanced">
+          <label>Extension hint<input name="extension" type="text" placeholder="html"></label>
+          <label>Charset<input name="charset" type="text" placeholder="utf-8"></label>
+          <label class="checkbox"><input name="use_plugins" type="checkbox" value="1"> Use plugins</label>
+          <label class="checkbox"><input name="keep_data_uris" type="checkbox" value="1"> Keep data URIs</label>
+        </div>
+      </details>
       <button type="submit">Convert URL</button>
     </form>
 
@@ -319,10 +373,11 @@ func convert(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	options := optionsFromRequest(r)
 
 	results := make([]conversionResult, 0, len(headers))
 	for index, header := range headers {
-		results = append(results, convertFile(r.Context(), header, index))
+		results = append(results, convertFile(r.Context(), header, index, options))
 	}
 
 	render(pageData{Results: results})(w, r)
@@ -333,6 +388,7 @@ func convertZip(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	options := optionsFromRequest(r)
 
 	var archive bytes.Buffer
 	zipWriter := zip.NewWriter(&archive)
@@ -340,7 +396,7 @@ func convertZip(w http.ResponseWriter, r *http.Request) {
 	var errors strings.Builder
 
 	for index, header := range headers {
-		result := convertFile(r.Context(), header, index)
+		result := convertFile(r.Context(), header, index, options)
 		if result.Error != "" {
 			fmt.Fprintf(&errors, "%s: %s\n", result.FileName, result.Error)
 			continue
@@ -395,7 +451,7 @@ func convertURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result := convertLocation(r.Context(), rawURL, 0)
+	result := convertLocation(r.Context(), rawURL, 0, optionsFromRequest(r))
 	render(pageData{Results: []conversionResult{result}})(w, r)
 }
 
@@ -415,7 +471,7 @@ func uploadedFiles(w http.ResponseWriter, r *http.Request) ([]*multipart.FileHea
 	return headers, true
 }
 
-func convertFile(requestContext context.Context, header *multipart.FileHeader, index int) conversionResult {
+func convertFile(requestContext context.Context, header *multipart.FileHeader, index int, options conversionOptions) conversionResult {
 	result := conversionResult{
 		ID:           "result-" + strconv.Itoa(index),
 		FileName:     header.Filename,
@@ -450,7 +506,7 @@ func convertFile(requestContext context.Context, header *multipart.FileHeader, i
 	defer cancel()
 
 	var stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, "markitdown", tmp.Name())
+	cmd := exec.CommandContext(ctx, "markitdown", commandArgs(tmp.Name(), options)...)
 	cmd.Stderr = &stderr
 	output, err := cmd.Output()
 	if err != nil {
@@ -465,7 +521,7 @@ func convertFile(requestContext context.Context, header *multipart.FileHeader, i
 	return result
 }
 
-func convertLocation(requestContext context.Context, location string, index int) conversionResult {
+func convertLocation(requestContext context.Context, location string, index int, options conversionOptions) conversionResult {
 	result := conversionResult{
 		ID:           "result-" + strconv.Itoa(index),
 		FileName:     location,
@@ -476,7 +532,7 @@ func convertLocation(requestContext context.Context, location string, index int)
 	defer cancel()
 
 	var stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, "markitdown", location)
+	cmd := exec.CommandContext(ctx, "markitdown", commandArgs(location, options)...)
 	cmd.Stderr = &stderr
 	output, err := cmd.Output()
 	if err != nil {
@@ -489,6 +545,32 @@ func convertLocation(requestContext context.Context, location string, index int)
 
 	result.Markdown = string(output)
 	return result
+}
+
+func optionsFromRequest(r *http.Request) conversionOptions {
+	return conversionOptions{
+		UsePlugins:   r.FormValue("use_plugins") == "1",
+		Extension:    strings.TrimSpace(r.FormValue("extension")),
+		Charset:      strings.TrimSpace(r.FormValue("charset")),
+		KeepDataURIs: r.FormValue("keep_data_uris") == "1",
+	}
+}
+
+func commandArgs(location string, options conversionOptions) []string {
+	args := []string{}
+	if options.UsePlugins {
+		args = append(args, "--use-plugins")
+	}
+	if options.Extension != "" {
+		args = append(args, "--extension", options.Extension)
+	}
+	if options.Charset != "" {
+		args = append(args, "--charset", options.Charset)
+	}
+	if options.KeepDataURIs {
+		args = append(args, "--keep-data-uris")
+	}
+	return append(args, location)
 }
 
 func markdownFileName(name string) string {
