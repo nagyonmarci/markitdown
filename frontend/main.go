@@ -10,6 +10,7 @@ import (
 	"log"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -81,6 +82,16 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
       border: 1px dashed #aab3bf;
       border-radius: 6px;
       background: #fafbfc;
+    }
+    input[type="url"] {
+      box-sizing: border-box;
+      min-height: 44px;
+      padding: 0 12px;
+      border: 1px solid #aab3bf;
+      border-radius: 6px;
+      background: #fafbfc;
+      color: inherit;
+      font: inherit;
     }
     button {
       justify-self: start;
@@ -174,6 +185,10 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
         background: #14191f;
         border-color: #4b5563;
       }
+      input[type="url"] {
+        background: #14191f;
+        border-color: #4b5563;
+      }
       .message {
         background: #3b1518;
         color: #ffd7d4;
@@ -195,6 +210,11 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
         <button type="submit">Convert</button>
         <button type="submit" class="secondary" formaction="/convert.zip">Download ZIP</button>
       </div>
+    </form>
+
+    <form action="/convert-url" method="post">
+      <input name="url" type="url" placeholder="https://example.com/document.html" required>
+      <button type="submit">Convert URL</button>
     </form>
 
     {{if .Error}}<div class="message">{{.Error}}</div>{{end}}
@@ -273,6 +293,7 @@ func main() {
 	mux.HandleFunc("GET /", render(pageData{}))
 	mux.HandleFunc("POST /convert", convert)
 	mux.HandleFunc("POST /convert.zip", convertZip)
+	mux.HandleFunc("POST /convert-url", convertURL)
 
 	server := &http.Server{
 		Addr:              ":8080",
@@ -362,6 +383,22 @@ func convertZip(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func convertURL(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		render(pageData{Error: "Could not read the URL."})(w, r)
+		return
+	}
+
+	rawURL := strings.TrimSpace(r.FormValue("url"))
+	if rawURL == "" {
+		render(pageData{Error: "Enter a URL to convert."})(w, r)
+		return
+	}
+
+	result := convertLocation(r.Context(), rawURL, 0)
+	render(pageData{Results: []conversionResult{result}})(w, r)
+}
+
 func uploadedFiles(w http.ResponseWriter, r *http.Request) ([]*multipart.FileHeader, bool) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
 	if err := r.ParseMultipartForm(maxUploadSize); err != nil {
@@ -428,6 +465,32 @@ func convertFile(requestContext context.Context, header *multipart.FileHeader, i
 	return result
 }
 
+func convertLocation(requestContext context.Context, location string, index int) conversionResult {
+	result := conversionResult{
+		ID:           "result-" + strconv.Itoa(index),
+		FileName:     location,
+		DownloadName: markdownURLFileName(location),
+	}
+
+	ctx, cancel := context.WithTimeout(requestContext, 2*time.Minute)
+	defer cancel()
+
+	var stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, "markitdown", location)
+	cmd.Stderr = &stderr
+	output, err := cmd.Output()
+	if err != nil {
+		result.Error = "Conversion failed."
+		if stderr.Len() > 0 {
+			result.Error += " " + stderr.String()
+		}
+		return result
+	}
+
+	result.Markdown = string(output)
+	return result
+}
+
 func markdownFileName(name string) string {
 	base := filepath.Base(name)
 	ext := filepath.Ext(base)
@@ -435,6 +498,20 @@ func markdownFileName(name string) string {
 		return base + ".md"
 	}
 	return base[:len(base)-len(ext)] + ".md"
+}
+
+func markdownURLFileName(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Host == "" {
+		return "url.md"
+	}
+
+	name := strings.Trim(parsed.Host+parsed.EscapedPath(), "/")
+	name = strings.NewReplacer("/", "-", "\\", "-", ":", "-").Replace(name)
+	if name == "" {
+		name = parsed.Host
+	}
+	return markdownFileName(name)
 }
 
 func uniqueFileName(name string, used map[string]int) string {
