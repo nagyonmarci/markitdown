@@ -119,6 +119,7 @@ The CI workflow uses a **parallel fan-out** design — jobs are independent and 
 | `lint` | [pre-commit](https://pre-commit.com/) + [Black](https://github.com/psf/black) | Consistent code formatting across the entire codebase |
 | `typecheck` | [mypy](https://mypy-lang.org/) via [Hatch](https://hatch.pypa.io/) | Static type checking for all four packages (report-only while pre-existing type debt is cleared) |
 | `test` | [Hatch](https://hatch.pypa.io/) + pytest | Functional correctness across packages on Python 3.10–3.13 |
+| `frontend-go-test` | Go test + native fuzz target | Frontend helper regression tests and OpenSSF-detectable fuzzing coverage |
 
 The test matrix fans out per package and Python version: `markitdown` is tested on 3.10, 3.11, 3.12, and 3.13 (the version the shipped Docker image runs) and `markitdown-sample-plugin` on 3.12 — each as a separate gating job, so a version- or package-specific regression is pinpointed precisely. `markitdown-ocr` runs as a non-blocking leg until a pre-existing test failure (`test_pdf_multipage`) is triaged.
 
@@ -160,6 +161,7 @@ The Docker image is built from source and scanned with [Trivy](https://github.co
 - **Dependency review** — surfaces newly introduced dependencies with known CVEs or incompatible licenses on every pull request (advisory / non-blocking).
 - **Security summary** — a bot posts a **sticky comment** on every PR with a consolidated table of all security job results. The comment is updated in-place on each new push, so reviewers always see the current state without scrolling through history.
 - **Code ownership** — a [`CODEOWNERS`](.github/CODEOWNERS) file routes review requests for the CI/CD workflows, Dockerfiles, and `compose.yaml` to their owners, so changes to security-critical infrastructure always get a designated reviewer.
+- **Pinned workflow dependencies** — GitHub Actions are pinned to full commit SHAs, and Docker base images are pinned by digest, reducing the blast radius of compromised mutable tags.
 
 ### Release & Supply Chain Security (`release.yml`)
 
