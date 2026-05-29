@@ -55,6 +55,12 @@ go build -o markitdown-frontend .
 ./markitdown-frontend
 ```
 
+### Screenshots
+
+![MarkItDown web frontend upload screen](docs/screenshots/frontend-home.png)
+
+![MarkItDown web frontend conversion results](docs/screenshots/frontend-results.png)
+
 ### Features
 
 **File conversion**
@@ -99,6 +105,8 @@ Three GitHub Actions workflows cover the full software delivery lifecycle:
 | [`ci.yml`](.github/workflows/ci.yml) | Every push to `main` + every PR | Quality gates and security scanning |
 | [`release.yml`](.github/workflows/release.yml) | Push to `main` or version tag `v*.*.*` | Docker image build, signing, and publishing |
 | [`scorecard.yml`](.github/workflows/scorecard.yml) | Weekly + every push to `main` | OSSF supply chain health score |
+
+![GitHub Actions workflow runs for the MarkItDown repository](docs/screenshots/github-actions.png)
 
 ### Continuous Integration (`ci.yml`)
 
