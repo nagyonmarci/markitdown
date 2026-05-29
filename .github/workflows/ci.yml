@@ -41,7 +41,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install Hatch
-        run: pipx install hatch
+        run: pipx install hatch==1.16.5
       # Report-only: surfaces mypy annotations without blocking while
       # pre-existing type debt is cleared. Remove continue-on-error to gate.
       - name: Type check
@@ -67,7 +67,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install Hatch
-        run: pipx install hatch
+        run: pipx install hatch==1.16.5
       # markitdown-ocr has a pre-existing failing test (test_pdf_multipage);
       # its leg is non-blocking until triaged. Flip optional to false to gate.
       - name: Run tests
@@ -216,7 +216,7 @@ jobs:
       - name: Install package (matches the shipped Docker image)
         run: pip install ./packages/markitdown[all]
       - name: Audit installed dependencies (report-only)
-        run: pipx run pip-audit --strict || true
+        run: pipx run --spec pip-audit==2.10.0 pip-audit --strict || true
 
   security-summary:
     name: Security summary
