@@ -179,7 +179,7 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: "0"
       - uses: github/codeql-action/upload-sarif@fee9466b8957867761f2d78f922ab084e3e2dd17 # v3
-        if: always()
+        if: always() && github.event_name != 'pull_request'
         with:
           sarif_file: trivy.sarif
       - name: Trivy gate (fixable HIGH/CRITICAL)
