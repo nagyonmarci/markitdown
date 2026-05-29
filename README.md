@@ -82,7 +82,7 @@ go build -o markitdown-frontend .
 
 The frontend is a thin HTTP adapter over the `markitdown` CLI binary. It spawns a subprocess per request (`exec.CommandContext` with a 2-minute timeout), streams the output back to the browser, and handles errors gracefully. This design keeps the Go code simple and ensures the frontend stays in sync with the CLI automatically — no duplicated conversion logic.
 
-The multi-stage `frontend/Dockerfile` compiles the Go binary in a `golang:1.22` builder stage, then copies it into a Python runtime image with the `markitdown` CLI (and `yt-dlp`) installed, so all conversion dependencies are available at runtime.
+The multi-stage `frontend/Dockerfile` compiles the Go binary in a `golang:1.23` builder stage, then copies it into a Python runtime image with the `markitdown` CLI (and `yt-dlp`) installed, so all conversion dependencies are available at runtime.
 
 ---
 
@@ -110,9 +110,9 @@ The CI workflow uses a **parallel fan-out** design — jobs are independent and 
 |---|---|---|
 | `lint` | [pre-commit](https://pre-commit.com/) + [Black](https://github.com/psf/black) | Consistent code formatting across the entire codebase |
 | `typecheck` | [mypy](https://mypy-lang.org/) via [Hatch](https://hatch.pypa.io/) | Static type checking for all four packages (report-only while pre-existing type debt is cleared) |
-| `test` | [Hatch](https://hatch.pypa.io/) + pytest | Functional correctness across packages on Python 3.10–3.12 |
+| `test` | [Hatch](https://hatch.pypa.io/) + pytest | Functional correctness across packages on Python 3.10–3.13 |
 
-The test matrix fans out per package and Python version: `markitdown` is tested on 3.10, 3.11, and 3.12 and `markitdown-sample-plugin` on 3.12 — each as a separate gating job, so a version- or package-specific regression is pinpointed precisely. `markitdown-ocr` runs as a non-blocking leg until a pre-existing test failure (`test_pdf_multipage`) is triaged.
+The test matrix fans out per package and Python version: `markitdown` is tested on 3.10, 3.11, 3.12, and 3.13 (the version the shipped Docker image runs) and `markitdown-sample-plugin` on 3.12 — each as a separate gating job, so a version- or package-specific regression is pinpointed precisely. `markitdown-ocr` runs as a non-blocking leg until a pre-existing test failure (`test_pdf_multipage`) is triaged.
 
 #### Security scanning
 
@@ -229,7 +229,7 @@ The score runs weekly and on every push to `main`, with SARIF results integrated
 | `github-actions` | `/` | Action version pins in all workflows |
 | `pip` | `/packages/markitdown` | Python runtime dependencies |
 | `gomod` | `/frontend` | Go module dependencies |
-| `docker` | `/` | Base image tag in the root `Dockerfile` |
+| `docker` | `/`, `/frontend` | Base image tags in both Dockerfiles |
 
 Dependabot PRs are validated by the full CI pipeline before any human reviews them, so a failing security scan on a dependency update is surfaced immediately.
 
