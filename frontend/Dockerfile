@@ -1,11 +1,11 @@
-FROM golang:1.22-bookworm AS builder
+FROM golang:1.23-bookworm AS builder
 
 WORKDIR /src
 COPY frontend/go.mod ./go.mod
 COPY frontend/main.go ./main.go
 RUN CGO_ENABLED=0 go build -o /markitdown-frontend .
 
-FROM python:3.13-slim-bullseye
+FROM python:3.13-slim-trixie
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV EXIFTOOL_PATH=/usr/bin/exiftool

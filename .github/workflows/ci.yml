@@ -58,6 +58,7 @@ jobs:
           - { package: markitdown, python-version: "3.10", optional: false }
           - { package: markitdown, python-version: "3.11", optional: false }
           - { package: markitdown, python-version: "3.12", optional: false }
+          - { package: markitdown, python-version: "3.13", optional: false }
           - { package: markitdown-ocr, python-version: "3.12", optional: true }
           - { package: markitdown-sample-plugin, python-version: "3.12", optional: false }
     steps:
