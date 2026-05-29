@@ -1,3 +1,17 @@
+## Repository governance for this fork
+
+This fork uses GitHub branch protection on `main` to keep supply-chain changes
+reviewed and traceable. Recommended repository rules:
+
+- Require a pull request before merging.
+- Require at least one approving human review.
+- Require review from `.github/CODEOWNERS`.
+- Dismiss stale approvals when new commits are pushed.
+- Require all conversations to be resolved before merging.
+- Require the CI, security, and Scorecard workflows to pass.
+- Include administrators in the rule and do not allow bypasses except for
+  documented emergency security fixes.
+
 <!-- BEGIN MICROSOFT SECURITY.MD V0.0.9 BLOCK -->
 
 ## Security

@@ -10,6 +10,21 @@ updates:
     schedule:
       interval: "weekly"
 
+  - package-ecosystem: "pip"
+    directory: "/packages/markitdown-ocr"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "pip"
+    directory: "/packages/markitdown-mcp"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "pip"
+    directory: "/packages/markitdown-sample-plugin"
+    schedule:
+      interval: "weekly"
+
   - package-ecosystem: "gomod"
     directory: "/frontend"
     schedule:
