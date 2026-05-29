@@ -1,295 +1,39 @@
 # MarkItDown
 
-[![PyPI](https://img.shields.io/pypi/v/markitdown.svg)](https://pypi.org/project/markitdown/)
-![PyPI - Downloads](https://img.shields.io/pypi/dd/markitdown)
-[![Built by AutoGen Team](https://img.shields.io/badge/Built%20by-AutoGen%20Team-blue)](https://github.com/microsoft/autogen)
 [![CI](https://github.com/nagyonmarci/markitdown/actions/workflows/ci.yml/badge.svg)](https://github.com/nagyonmarci/markitdown/actions/workflows/ci.yml)
 [![Release](https://github.com/nagyonmarci/markitdown/actions/workflows/release.yml/badge.svg)](https://github.com/nagyonmarci/markitdown/actions/workflows/release.yml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/nagyonmarci/markitdown/badge)](https://securityscorecards.dev/viewer/?uri=github.com/nagyonmarci/markitdown)
 [![Container](https://img.shields.io/badge/GHCR-ghcr.io%2Fnagyonmarci%2Fmarkitdown-blue?logo=docker)](https://github.com/nagyonmarci/markitdown/pkgs/container/markitdown)
 
-> [!IMPORTANT]
-> MarkItDown performs I/O with the privileges of the current process. Like open() or requests.get(), it will access resources that the process itself can access. Sanitize your inputs in untrusted environments, and call the narrowest `convert_*` function needed for your use case (e.g., `convert_stream()`, or `convert_local()`). See the [Security Considerations](#security-considerations) section of the documentation for more information.
+> This is a fork of [**microsoft/markitdown**](https://github.com/microsoft/markitdown) — a lightweight Python utility for converting files (PDF, Office documents, images, audio, HTML, and more) to Markdown for use with LLMs and text-analysis pipelines.
+>
+> **The core conversion library is unchanged.** For installation, supported formats, the command-line and Python APIs, plugins, and the Azure Document Intelligence / Content Understanding integrations, see the **[upstream README »](https://github.com/microsoft/markitdown#readme)**.
 
-MarkItDown is a lightweight Python utility for converting various files to Markdown for use with LLMs and related text analysis pipelines. To this end, it is most comparable to [textract](https://github.com/deanmalmgren/textract), but with a focus on preserving important document structure and content as Markdown (including: headings, lists, tables, links, etc.) While the output is often reasonably presentable and human-friendly, it is meant to be consumed by text analysis tools -- and may not be the best option for high-fidelity document conversions for human consumption.
+## What this fork adds
 
-MarkItDown currently supports the conversion from:
+This fork focuses on **shipping and operating** MarkItDown rather than on the conversion library itself:
 
-- PDF
-- PowerPoint
-- Word
-- Excel
-- Images (EXIF metadata and OCR)
-- Audio (EXIF metadata and speech transcription)
-- HTML
-- Text-based formats (CSV, JSON, XML)
-- ZIP files (iterates over contents)
-- Youtube URLs
-- EPubs
-- ... and more!
+- **[Web Frontend](#web-frontend)** — a self-contained Go web UI that exposes the full MarkItDown CLI over HTTP, with batch file upload, URL/YouTube conversion, and ZIP export.
+- **[DevSecOps Pipeline](#devsecops-pipeline)** — a hardened, shift-left CI/CD pipeline with parallel security scanning, build gating, keyless image signing, and SBOM attestation.
+- **[`markitdown-ocr` plugin](packages/markitdown-ocr/README.md)** — LLM-vision OCR for images embedded in PDF, DOCX, PPTX, and XLSX files, reusing the same `llm_client` / `llm_model` pattern MarkItDown already uses for image descriptions.
 
-## Why Markdown?
+## Quick start
 
-Markdown is extremely close to plain text, with minimal markup or formatting, but still
-provides a way to represent important document structure. Mainstream LLMs, such as
-OpenAI's GPT-4o, natively "_speak_" Markdown, and often incorporate Markdown into their
-responses unprompted. This suggests that they have been trained on vast amounts of
-Markdown-formatted text, and understand it well. As a side benefit, Markdown conventions
-are also highly token-efficient.
-
-## Prerequisites
-MarkItDown requires Python 3.10 or higher. It is recommended to use a virtual environment to avoid dependency conflicts.
-
-With the standard Python installation, you can create and activate a virtual environment using the following commands:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-```
-
-If using `uv`, you can create a virtual environment with:
-
-```bash
-uv venv --python=3.12 .venv
-source .venv/bin/activate
-# NOTE: Be sure to use 'uv pip install' rather than just 'pip install' to install packages in this virtual environment
-```
-
-If you are using Anaconda, you can create a virtual environment with:
-
-```bash
-conda create -n markitdown python=3.12
-conda activate markitdown
-```
-
-## Installation
-
-To install MarkItDown, use pip: `pip install 'markitdown[all]'`. Alternatively, you can install it from the source:
-
-```bash
-git clone git@github.com:microsoft/markitdown.git
-cd markitdown
-pip install -e 'packages/markitdown[all]'
-```
-
-## Usage
-
-### Command-Line
-
-```bash
-markitdown path-to-file.pdf > document.md
-```
-
-Or use `-o` to specify the output file:
-
-```bash
-markitdown path-to-file.pdf -o document.md
-```
-
-You can also pipe content:
-
-```bash
-cat path-to-file.pdf | markitdown
-```
-
-### Optional Dependencies
-MarkItDown has optional dependencies for activating various file formats. Earlier in this document, we installed all optional dependencies with the `[all]` option. However, you can also install them individually for more control. For example:
-
-```bash
-pip install 'markitdown[pdf, docx, pptx]'
-```
-
-will install only the dependencies for PDF, DOCX, and PPTX files.
-
-At the moment, the following optional dependencies are available:
-
-* `[all]` Installs all optional dependencies
-* `[pptx]` Installs dependencies for PowerPoint files
-* `[docx]` Installs dependencies for Word files
-* `[xlsx]` Installs dependencies for Excel files
-* `[xls]` Installs dependencies for older Excel files
-* `[pdf]` Installs dependencies for PDF files
-* `[outlook]` Installs dependencies for Outlook messages
-* `[az-doc-intel]` Installs dependencies for Azure Document Intelligence
-* `[az-content-understanding]` Installs dependencies for Azure Content Understanding
-* `[audio-transcription]` Installs dependencies for audio transcription of wav and mp3 files
-* `[youtube-transcription]` Installs dependencies for fetching YouTube video transcription
-
-### Plugins
-
-MarkItDown also supports 3rd-party plugins. Plugins are disabled by default. To list installed plugins:
-
-```bash
-markitdown --list-plugins
-```
-
-To enable plugins use:
-
-```bash
-markitdown --use-plugins path-to-file.pdf
-```
-
-To find available plugins, search GitHub for the hashtag `#markitdown-plugin`. To develop a plugin, see `packages/markitdown-sample-plugin`.
-
-#### markitdown-ocr Plugin
-
-The `markitdown-ocr` plugin adds OCR support to PDF, DOCX, PPTX, and XLSX converters, extracting text from embedded images using LLM Vision — the same `llm_client` / `llm_model` pattern that MarkItDown already uses for image descriptions. No new ML libraries or binary dependencies required.
-
-**Installation:**
-
-```bash
-pip install markitdown-ocr
-pip install openai  # or any OpenAI-compatible client
-```
-
-**Usage:**
-
-Pass the same `llm_client` and `llm_model` you would use for image descriptions:
-
-```python
-from markitdown import MarkItDown
-from openai import OpenAI
-
-md = MarkItDown(
-    enable_plugins=True,
-    llm_client=OpenAI(),
-    llm_model="gpt-4o",
-)
-result = md.convert("document_with_images.pdf")
-print(result.text_content)
-```
-
-If no `llm_client` is provided the plugin still loads, but OCR is silently skipped and the standard built-in converter is used instead.
-
-See [`packages/markitdown-ocr/README.md`](packages/markitdown-ocr/README.md) for detailed documentation.
-
-### Azure Content Understanding
-
-[Azure Content Understanding](https://learn.microsoft.com/azure/ai-services/content-understanding/) provides higher-quality conversion with structured field extraction (YAML front matter), multi-modal support (documents, images, audio, video), and configurable analyzers.
-
-Install: `pip install 'markitdown[az-content-understanding]'`
-
-#### When to use Content Understanding
-
-Content Understanding is ideal when you need capabilities beyond what built-in or Document Intelligence converters provide:
-
-- **Audio and video files** — CU is the only option for video, and the higher-quality cloud option for audio. Built-in converters have no video support and only basic audio transcription.
-- **Structured field extraction** — [Prebuilt](https://learn.microsoft.com/azure/ai-services/content-understanding/concepts/prebuilt-analyzers) or [custom-built](https://learn.microsoft.com/azure/ai-services/content-understanding/how-to/customize-analyzer-content-understanding-studio?tabs=portal) analyzers extract domain-specific fields (invoice amounts, receipt dates, contract clauses) serialized as YAML front matter. Neither built-in nor Doc Intel integration exposes fields.
-- **Higher-quality document extraction** — Cloud-based layout analysis and OCR for scanned PDFs, complex tables, and multi-page documents.
-- **Single API for all modalities** — One `cu_endpoint` handles documents, images, audio, and video with automatic analyzer routing.
-
-| Capability | Built-in converters | Azure Document Intelligence | Azure Content Understanding |
-|------------|---------------------|-----------------------------|-----------------------------|
-| Document conversion | Offline, format-specific extraction | Cloud layout extraction | Cloud multimodal extraction |
-| Structured fields | Not available | Not exposed by this integration | YAML front matter from analyzer fields |
-| Custom analyzers | Not available | Not configurable in this integration | Supported with `cu_analyzer_id` |
-| Audio and video | Basic audio, no video | Not supported | Audio and video analyzers |
-| Cost | Local compute only | Billable Azure API calls | Billable Azure API calls |
-
-**CLI:**
-
-```bash
-markitdown path-to-file.pdf --use-cu --cu-endpoint "<content_understanding_endpoint>"
-```
-
-**Python API:**
-
-```python
-from markitdown import MarkItDown
-
-# Zero-config — auto-selects analyzer per file type
-md = MarkItDown(cu_endpoint="<content_understanding_endpoint>")
-result = md.convert("report.pdf")   # documents → prebuilt-documentSearch
-result = md.convert("meeting.mp4")  # video → prebuilt-videoSearch
-result = md.convert("call.wav")     # audio → prebuilt-audioSearch
-print(result.markdown)
-```
-
-**With a custom analyzer** (for domain-specific field extraction):
-
-```python
-md = MarkItDown(
-    cu_endpoint="<content_understanding_endpoint>",
-    cu_analyzer_id="my-invoice-analyzer",
-)
-result = md.convert("invoice.pdf")
-print(result.markdown)
-# Output includes YAML front matter with extracted fields:
-# ---
-# contentType: document
-# fields:
-#   VendorName: CONTOSO LTD.
-#   InvoiceDate: '2019-11-15'
-# ---
-# <!-- page 1 -->
-# ...
-```
-
-When `cu_analyzer_id` is set, the converter automatically scopes it to compatible file types based on the analyzer's modality. Incompatible types (e.g., audio files with a document analyzer) auto-route to default prebuilt analyzers.
-
-**Cost note:** Each `convert()` call for a CU-routed format is a billable Azure API call. Use `cu_file_types` to restrict which formats route to CU:
-
-```python
-from markitdown.converters import ContentUnderstandingFileType
-
-md = MarkItDown(
-    cu_endpoint="<content_understanding_endpoint>",
-    cu_file_types=[ContentUnderstandingFileType.PDF],  # only PDFs use CU
-)
-```
-
-More information about Azure Content Understanding can be found [here](https://learn.microsoft.com/azure/ai-services/content-understanding/).
-
-### Azure Document Intelligence
-
-To use Microsoft Document Intelligence for conversion:
-
-```bash
-markitdown path-to-file.pdf -o document.md -d -e "<document_intelligence_endpoint>"
-```
-
-More information about how to set up an Azure Document Intelligence Resource can be found [here](https://learn.microsoft.com/en-us/azure/ai-services/document-intelligence/how-to-guides/create-document-intelligence-resource?view=doc-intel-4.0.0)
-
-### Python API
-
-Basic usage in Python:
-
-```python
-from markitdown import MarkItDown
-
-md = MarkItDown(enable_plugins=False) # Set to True to enable plugins
-result = md.convert("test.xlsx")
-print(result.text_content)
-```
-
-Document Intelligence conversion in Python:
-
-```python
-from markitdown import MarkItDown
-
-md = MarkItDown(docintel_endpoint="<document_intelligence_endpoint>")
-result = md.convert("test.pdf")
-print(result.text_content)
-```
-
-To use Large Language Models for image descriptions (currently only for pptx and image files), provide `llm_client` and `llm_model`:
-
-```python
-from markitdown import MarkItDown
-from openai import OpenAI
-
-client = OpenAI()
-md = MarkItDown(llm_client=client, llm_model="gpt-4o", llm_prompt="optional custom prompt")
-result = md.convert("example.jpg")
-print(result.text_content)
-```
-
-### Docker
+Run the web frontend locally with Docker Compose:
 
 ```sh
-docker build -t markitdown:latest .
-docker run --rm -i markitdown:latest < ~/your-file.pdf > output.md
+docker compose up
 ```
+
+Then open <http://localhost:8088>. (Internally the container listens on port `8080`.)
+
+The CI/CD pipeline also publishes a signed CLI image to the GitHub Container Registry:
+
+```sh
+docker run --rm -i ghcr.io/nagyonmarci/markitdown:latest < ~/your-file.pdf > output.md
+```
+
+---
 
 ## Web Frontend
 
@@ -338,7 +82,7 @@ go build -o markitdown-frontend .
 
 The frontend is a thin HTTP adapter over the `markitdown` CLI binary. It spawns a subprocess per request (`exec.CommandContext` with a 2-minute timeout), streams the output back to the browser, and handles errors gracefully. This design keeps the Go code simple and ensures the frontend stays in sync with the CLI automatically — no duplicated conversion logic.
 
-The multi-stage `frontend/Dockerfile` compiles the Go binary in a `golang:1.22` builder stage, then copies it into the same Python runtime image used by the main `Dockerfile`, ensuring the `markitdown` CLI and all its dependencies are available at runtime.
+The multi-stage `frontend/Dockerfile` compiles the Go binary in a `golang:1.23` builder stage, then copies it into a Python runtime image with the `markitdown` CLI (and `yt-dlp`) installed, so all conversion dependencies are available at runtime.
 
 ---
 
@@ -358,20 +102,21 @@ Three GitHub Actions workflows cover the full software delivery lifecycle:
 
 ### Continuous Integration (`ci.yml`)
 
-The CI workflow uses a **parallel fan-out** design — jobs are independent and run concurrently, minimising wall-clock time while maximising coverage.
+The CI workflow uses a **parallel fan-out** design — jobs are independent and run concurrently, minimising wall-clock time while maximising coverage. A `concurrency` group cancels superseded in-progress runs on the same pull request, so only the latest commit is scanned.
 
 #### Code quality
 
 | Job | Tool | What it checks |
 |---|---|---|
 | `lint` | [pre-commit](https://pre-commit.com/) + [Black](https://github.com/psf/black) | Consistent code formatting across the entire codebase |
-| `test` | [Hatch](https://hatch.pypa.io/) + pytest | Functional correctness on Python 3.10, 3.11, and 3.12 in parallel |
+| `typecheck` | [mypy](https://mypy-lang.org/) via [Hatch](https://hatch.pypa.io/) | Static type checking for all four packages (report-only while pre-existing type debt is cleared) |
+| `test` | [Hatch](https://hatch.pypa.io/) + pytest | Functional correctness across packages on Python 3.10–3.13 |
 
-The test matrix runs each Python version as a separate job, so a version-specific regression is caught precisely instead of masking a passing version.
+The test matrix fans out per package and Python version: `markitdown` is tested on 3.10, 3.11, 3.12, and 3.13 (the version the shipped Docker image runs) and `markitdown-sample-plugin` on 3.12 — each as a separate gating job, so a version- or package-specific regression is pinpointed precisely. `markitdown-ocr` runs as a non-blocking leg until a pre-existing test failure (`test_pdf_multipage`) is triaged.
 
 #### Security scanning
 
-Five independent security lenses run in parallel on every push:
+Six independent security lenses run in parallel on every push:
 
 **1. Secret detection — Gitleaks**
 
@@ -392,16 +137,21 @@ Both `Dockerfile` (Python runtime image) and `frontend/Dockerfile` (multi-stage 
 
 **4. Infrastructure-as-Code scanning — Checkov**
 
-[Checkov](https://www.checkov.io/) (Prisma Cloud) scans `compose.yaml` for Docker Compose misconfigurations: containers running as root, missing health checks, exposed secrets, insecure bind mounts, and writable container filesystems. Results are uploaded as SARIF to the Security tab.
+[Checkov](https://www.checkov.io/) (Prisma Cloud) scans `compose.yaml` for Docker Compose misconfigurations: containers running as root, missing health checks, exposed secrets, insecure bind mounts, and writable container filesystems. The scan **fails the build** on any finding (`soft_fail: false`), and `compose.yaml` is hardened to match: a `read_only` root filesystem with a `/tmp` tmpfs, `cap_drop: ALL`, `no-new-privileges`, resource limits, and a healthcheck. Results are also uploaded as SARIF to the Security tab.
 
 **5. Container image vulnerability scan — Trivy**
 
-The Docker image is built from source and scanned with [Trivy](https://github.com/aquasecurity/trivy) for CVEs at `HIGH` and `CRITICAL` severity. The scan runs against the **built artifact**, not just the Dockerfile, which catches vulnerabilities introduced by transitive Python or system dependencies that static analysis cannot see.
+The Docker image is built from source and scanned with [Trivy](https://github.com/aquasecurity/trivy) for CVEs at `HIGH` and `CRITICAL` severity. The scan runs against the **built artifact**, not just the Dockerfile, which catches vulnerabilities introduced by transitive Python or system dependencies that static analysis cannot see. The complete result set is uploaded as SARIF, and a second gate step **fails the build** on *fixable* HIGH/CRITICAL CVEs (`ignore-unfixed: true`) — so an actionable, patchable vulnerability blocks merge while an unpatched upstream advisory doesn't permanently wedge the pipeline.
+
+**6. Python dependency audit — pip-audit**
+
+[pip-audit](https://github.com/pypa/pip-audit) resolves the installed dependency tree (matching what ships in the Docker image) and checks it against the [PyPI Advisory Database](https://github.com/pypa/advisory-database). It runs report-only for now, complementing Trivy with Python-package-level CVE visibility that an image scan attributes to the OS layer.
 
 #### PR gates
 
-- **Dependency review** — flags newly introduced dependencies with known CVEs or incompatible licenses on every pull request, before merge.
+- **Dependency review** — surfaces newly introduced dependencies with known CVEs or incompatible licenses on every pull request (advisory / non-blocking).
 - **Security summary** — a bot posts a **sticky comment** on every PR with a consolidated table of all security job results. The comment is updated in-place on each new push, so reviewers always see the current state without scrolling through history.
+- **Code ownership** — a [`CODEOWNERS`](.github/CODEOWNERS) file routes review requests for the CI/CD workflows, Dockerfiles, and `compose.yaml` to their owners, so changes to security-critical infrastructure always get a designated reviewer.
 
 ### Release & Supply Chain Security (`release.yml`)
 
@@ -452,7 +202,7 @@ This fulfils emerging regulatory requirements (e.g. US Executive Order 14028) th
 
 #### Post-publish vulnerability scan
 
-After the image is pushed, Trivy scans the **published registry image** (not the local build cache) for `HIGH` and `CRITICAL` CVEs. This catches any discrepancy between the local build environment and what actually landed in the registry. Results are uploaded as SARIF to the Security tab.
+After the image is pushed, Trivy scans the **published registry image** (not the local build cache) for `HIGH` and `CRITICAL` CVEs. This catches any discrepancy between the local build environment and what actually landed in the registry. Results are uploaded as SARIF to the Security tab, and — mirroring CI — a gate step fails the release on *fixable* HIGH/CRITICAL findings (`ignore-unfixed: true`).
 
 #### GitHub Releases
 
@@ -479,77 +229,19 @@ The score runs weekly and on every push to `main`, with SARIF results integrated
 | `github-actions` | `/` | Action version pins in all workflows |
 | `pip` | `/packages/markitdown` | Python runtime dependencies |
 | `gomod` | `/frontend` | Go module dependencies |
-| `docker` | `/` | Base image tags in both Dockerfiles |
+| `docker` | `/`, `/frontend` | Base image tags in both Dockerfiles |
 
 Dependabot PRs are validated by the full CI pipeline before any human reviews them, so a failing security scan on a dependency update is surfaced immediately.
 
 ---
 
-## Contributing
+## Contributing & License
 
-This project welcomes contributions and suggestions. Most contributions require you to agree to a
-Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us
-the rights to use your contribution. For details, visit https://cla.opensource.microsoft.com.
+This fork tracks [microsoft/markitdown](https://github.com/microsoft/markitdown). Improvements to the **core conversion library** are best contributed upstream — see the upstream [contributing guide](https://github.com/microsoft/markitdown#contributing) and its [Security Considerations](https://github.com/microsoft/markitdown#security-considerations). Changes specific to this fork (the web frontend, the CI/CD pipeline, and the `markitdown-ocr` plugin) are welcome here.
 
-When you submit a pull request, a CLA bot will automatically determine whether you need to provide
-a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions
-provided by the bot. You will only need to do this once across all repos using our CLA.
+Released under the [MIT License](LICENSE).
 
-This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
-For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or
-contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
-
-### How to Contribute
-
-You can help by looking at issues or helping review PRs. Any issue or PR is welcome, but we have also marked some as 'open for contribution' and 'open for reviewing' to help facilitate community contributions. These are of course just suggestions and you are welcome to contribute in any way you like.
-
-<div align="center">
-
-|            | All                                                          | Especially Needs Help from Community                                                                                                      |
-| ---------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| **Issues** | [All Issues](https://github.com/microsoft/markitdown/issues) | [Issues open for contribution](https://github.com/microsoft/markitdown/issues?q=is%3Aissue+is%3Aopen+label%3A%22open+for+contribution%22) |
-| **PRs**    | [All PRs](https://github.com/microsoft/markitdown/pulls)     | [PRs open for reviewing](https://github.com/microsoft/markitdown/pulls?q=is%3Apr+is%3Aopen+label%3A%22open+for+reviewing%22)              |
-
-</div>
-
-### Running Tests and Checks
-
-- Navigate to the MarkItDown package:
-
-  ```sh
-  cd packages/markitdown
-  ```
-
-- Install `hatch` in your environment and run tests:
-
-  ```sh
-  pip install hatch  # Other ways of installing hatch: https://hatch.pypa.io/dev/install/
-  hatch shell
-  hatch test
-  ```
-
-  (Alternative) Use the Devcontainer which has all the dependencies installed:
-
-  ```sh
-  # Reopen the project in Devcontainer and run:
-  hatch test
-  ```
-
-- Run pre-commit checks before submitting a PR: `pre-commit run --all-files`
-
-### Security Considerations
-
-MarkItDown performs I/O with the privileges of the current process. Like `open()` or `requests.get()`, it will access resources that the process itself can access. 
-
-**Sanitize your inputs:** Do not pass untrusted input directly to MarkItDown. If any part of the input may be controlled by an untrusted user or system, such as in hosted or server-side applications, it must be validated and restricted before calling MarkItDown. Depending on your environment, this may include restricting file paths, limiting URI schemes and network destinations, and blocking access to private, loopback, link-local, or metadata-service addresses. 
-
-**Call only the conversion method you need:** Prefer the narrowest conversion API that fits your use case. MarkItDown's `convert()` method is intentionally permissive and can handle local files, remote URIs, and byte streams. If your application only needs to read local files, call `convert_local()` instead. If you need more control over URI fetching, call `requests.get()` yourself and pass the response object to `convert_response()`. For maximum control, open a stream to the input you want converted and call `convert_stream()`.
-
-### Contributing 3rd-party Plugins
-
-You can also contribute by creating and sharing 3rd party plugins. See `packages/markitdown-sample-plugin` for more details.
-
-## Trademarks
+### Trademarks
 
 This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft
 trademarks or logos is subject to and must follow

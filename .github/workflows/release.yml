@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build-publish:
     name: Build & publish Docker image
@@ -79,7 +83,7 @@ jobs:
           sbom-path: sbom.cyclonedx.json
           push-to-registry: true
 
-      - name: Scan published image
+      - name: Scan published image (report)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}
@@ -93,6 +97,15 @@ jobs:
         if: always()
         with:
           sarif_file: trivy-release.sarif
+
+      - name: Trivy gate (fixable HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
 
   github-release:
     name: GitHub Release
