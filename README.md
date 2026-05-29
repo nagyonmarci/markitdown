@@ -149,7 +149,7 @@ The Docker image is built from source and scanned with [Trivy](https://github.co
 
 #### PR gates
 
-- **Dependency review** — flags newly introduced dependencies with known CVEs or incompatible licenses on every pull request, before merge.
+- **Dependency review** — surfaces newly introduced dependencies with known CVEs or incompatible licenses on every pull request (advisory / non-blocking).
 - **Security summary** — a bot posts a **sticky comment** on every PR with a consolidated table of all security job results. The comment is updated in-place on each new push, so reviewers always see the current state without scrolling through history.
 - **Code ownership** — a [`CODEOWNERS`](.github/CODEOWNERS) file routes review requests for the CI/CD workflows, Dockerfiles, and `compose.yaml` to their owners, so changes to security-critical infrastructure always get a designated reviewer.
 
@@ -229,7 +229,7 @@ The score runs weekly and on every push to `main`, with SARIF results integrated
 | `github-actions` | `/` | Action version pins in all workflows |
 | `pip` | `/packages/markitdown` | Python runtime dependencies |
 | `gomod` | `/frontend` | Go module dependencies |
-| `docker` | `/` | Base image tags in both Dockerfiles |
+| `docker` | `/` | Base image tag in the root `Dockerfile` |
 
 Dependabot PRs are validated by the full CI pipeline before any human reviews them, so a failing security scan on a dependency update is surfaced immediately.
 
