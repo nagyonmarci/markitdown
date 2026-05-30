@@ -86,6 +86,21 @@ jobs:
       - name: Run Go tests
         run: cd frontend && go test ./...
 
+  python-fuzz:
+    name: Python fuzz (smoke)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Install package and atheris
+        run: pip install ./packages/markitdown atheris>=2.3.0
+      - name: Run fuzz target (bounded smoke run)
+        run: >-
+          python packages/markitdown/fuzz/fuzz_markitdown.py
+          -atheris_runs=20000
+
   gitleaks:
     name: Secret detection
     runs-on: ubuntu-latest
@@ -222,7 +237,7 @@ jobs:
     name: Security summary
     runs-on: ubuntu-latest
     if: always() && github.event_name == 'pull_request'
-    needs: [gitleaks, codeql, sast-semgrep, dockerfile-lint, iac-checkov, image-scan, dependency-review, pip-audit]
+    needs: [gitleaks, codeql, sast-semgrep, dockerfile-lint, iac-checkov, image-scan, dependency-review, pip-audit, python-fuzz]
     permissions:
       pull-requests: write
     steps:
@@ -253,3 +268,4 @@ jobs:
             | Trivy image scan | `${{ needs.image-scan.result }}` |
             | Dependency review | `${{ needs.dependency-review.result }}` |
             | pip-audit (Python SCA) | `${{ needs.pip-audit.result }}` |
+            | Python fuzz (atheris) | `${{ needs.python-fuzz.result }}` |
