@@ -92,6 +92,13 @@ extra-dependencies = [
 [tool.hatch.envs.types.scripts]
 check = "mypy --install-types --non-interactive --ignore-missing-imports {args:src/markitdown tests}"
 
+[tool.hatch.envs.fuzz]
+features = ["all"]
+extra-dependencies = ["atheris>=2.3.0"]
+
+[tool.hatch.envs.fuzz.scripts]
+run = "python fuzz/fuzz_markitdown.py {args}"
+
 [tool.coverage.run]
 source_pkgs = ["markitdown", "tests"]
 branch = true
