@@ -27,6 +27,7 @@ from .converters import (
     YouTubeConverter,
     IpynbConverter,
     BingSerpConverter,
+    LinkedInJobConverter,
     PdfConverter,
     DocxConverter,
     XlsxConverter,
@@ -192,6 +193,7 @@ class MarkItDown:
             self.register_converter(WikipediaConverter())
             self.register_converter(YouTubeConverter())
             self.register_converter(BingSerpConverter())
+            self.register_converter(LinkedInJobConverter())
             self.register_converter(DocxConverter())
             self.register_converter(XlsxConverter())
             self.register_converter(XlsConverter())
