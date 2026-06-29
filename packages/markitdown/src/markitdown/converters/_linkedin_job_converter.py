@@ -91,9 +91,9 @@ class LinkedInJobConverter(DocumentConverter):
             soup.select_one("h1.top-card-layout__title")
             or soup.select_one(".topcard__title")
         )
-        description_elm = soup.select_one(".show-more-less-html__markup") or soup.select_one(
-            ".description__text"
-        )
+        description_elm = soup.select_one(
+            ".show-more-less-html__markup"
+        ) or soup.select_one(".description__text")
         if title is None or description_elm is None:
             return None
 
@@ -123,7 +123,9 @@ class LinkedInJobConverter(DocumentConverter):
         # Job criteria (seniority level, employment type, job function, industries)
         criteria_lines: List[str] = []
         for item in soup.select("ul.description__job-criteria-list li"):
-            header = _clean_text(item.select_one(".description__job-criteria-subheader"))
+            header = _clean_text(
+                item.select_one(".description__job-criteria-subheader")
+            )
             value = _clean_text(item.select_one(".description__job-criteria-text"))
             if header and value:
                 criteria_lines.append(f"- **{header}:** {value}")
@@ -131,7 +133,9 @@ class LinkedInJobConverter(DocumentConverter):
             parts.append("## Job criteria\n\n" + "\n".join(criteria_lines))
 
         # Description body -- markdownify to preserve lists, bold, links, etc.
-        description_md = _CustomMarkdownify(**kwargs).convert_soup(description_elm).strip()
+        description_md = (
+            _CustomMarkdownify(**kwargs).convert_soup(description_elm).strip()
+        )
         if description_md:
             parts.append("## Description\n\n" + description_md)
 
