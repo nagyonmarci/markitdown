@@ -97,7 +97,7 @@ go build -o markitdown-frontend .
 
 The frontend is a thin HTTP adapter over the `markitdown` CLI binary. It spawns a subprocess per request (`exec.CommandContext` with a 2-minute timeout), streams the output back to the browser, and handles errors gracefully. This design keeps the Go code simple and ensures the frontend stays in sync with the CLI automatically — no duplicated conversion logic.
 
-The multi-stage `frontend/Dockerfile` compiles the Go binary in a `golang:1.23` builder stage, then copies it into a Python runtime image with the `markitdown` CLI (and `yt-dlp`) installed, so all conversion dependencies are available at runtime.
+The multi-stage `frontend/Dockerfile` compiles the Go binary in a `golang:1.26` builder stage, then copies it into a [Chainguard Wolfi](https://edu.chainguard.dev/chainguard/chainguard-images/getting-started-python/) Python runtime image with the `markitdown` CLI (and `yt-dlp`) installed. Wolfi's minimal package set keeps the container surface near zero CVEs — `ffmpeg` is the only system package added at build time.
 
 ---
 
@@ -159,7 +159,7 @@ Both `Dockerfile` (Python runtime image) and `frontend/Dockerfile` (multi-stage 
 
 **5. Container image vulnerability scan — Trivy**
 
-The Docker image is built from source and scanned with [Trivy](https://github.com/aquasecurity/trivy) for CVEs at `HIGH` and `CRITICAL` severity. The scan runs against the **built artifact**, not just the Dockerfile, which catches vulnerabilities introduced by transitive Python or system dependencies that static analysis cannot see. The complete result set is uploaded as SARIF, and a second gate step **fails the build** on *fixable* HIGH/CRITICAL CVEs (`ignore-unfixed: true`) — so an actionable, patchable vulnerability blocks merge while an unpatched upstream advisory doesn't permanently wedge the pipeline.
+The Docker image is built from source and scanned with [Trivy](https://github.com/aquasecurity/trivy) for CVEs at `HIGH` and `CRITICAL` severity. The scan runs against the **built artifact**, not just the Dockerfile, which catches vulnerabilities introduced by transitive Python or system dependencies that static analysis cannot see. The complete result set is uploaded as SARIF, and a second gate step **fails the build** on *fixable* HIGH/CRITICAL CVEs (`ignore-unfixed: true`) — so an actionable, patchable vulnerability blocks merge while an unpatched upstream advisory doesn't permanently wedge the pipeline. The runtime image is based on [Chainguard Wolfi](https://edu.chainguard.dev/chainguard/chainguard-images/getting-started-python/) (`cgr.dev/chainguard/python`) rather than a general-purpose Debian base — Wolfi ships only the packages the application actually needs, eliminating the Perl, util-linux, passwd, and tar CVEs that accumulate in standard distro images.
 
 **6. Python dependency audit — pip-audit**
 
