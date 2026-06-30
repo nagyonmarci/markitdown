@@ -278,7 +278,7 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
     </form>
 
     <form action="/convert-url" method="post">
-      <input name="url" type="url" placeholder="https://example.com/document.html" required>
+      <textarea name="urls" rows="4" placeholder="https://example.com/document.html&#10;https://other.com/page.html" required></textarea>
       <details>
         <summary>Advanced options</summary>
         <div class="advanced">
@@ -288,7 +288,10 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
           <label class="checkbox"><input name="keep_data_uris" type="checkbox" value="1"> Keep data URIs</label>
         </div>
       </details>
-      <button type="submit">Convert URL</button>
+      <div class="actions">
+        <button type="submit">Convert URLs</button>
+        <button type="submit" class="secondary" formaction="/convert-url.merged">Merge into one</button>
+      </div>
     </form>
 
     {{if .Error}}<div class="message">{{.Error}}</div>{{end}}
@@ -369,6 +372,7 @@ func main() {
 	mux.HandleFunc("POST /convert.zip", convertZip)
 	mux.HandleFunc("POST /convert.merged", convertMerged)
 	mux.HandleFunc("POST /convert-url", convertURL)
+	mux.HandleFunc("POST /convert-url.merged", convertURLMerged)
 
 	server := &http.Server{
 		Addr:              ":8080",
@@ -509,19 +513,47 @@ func toAnchor(name string) string {
 }
 
 func convertURL(w http.ResponseWriter, r *http.Request) {
+	urls, ok := parsedURLs(w, r)
+	if !ok {
+		return
+	}
+	options := optionsFromRequest(r)
+	results := make([]conversionResult, 0, len(urls))
+	for i, u := range urls {
+		results = append(results, convertLocation(r.Context(), u, i, options))
+	}
+	render(pageData{Results: results})(w, r)
+}
+
+func convertURLMerged(w http.ResponseWriter, r *http.Request) {
+	urls, ok := parsedURLs(w, r)
+	if !ok {
+		return
+	}
+	options := optionsFromRequest(r)
+	results := make([]conversionResult, 0, len(urls))
+	for i, u := range urls {
+		results = append(results, convertLocation(r.Context(), u, i, options))
+	}
+	render(pageData{Results: []conversionResult{mergeResults(results)}})(w, r)
+}
+
+func parsedURLs(w http.ResponseWriter, r *http.Request) ([]string, bool) {
 	if err := r.ParseForm(); err != nil {
-		render(pageData{Error: "Could not read the URL."})(w, r)
-		return
+		render(pageData{Error: "Could not read the URLs."})(w, r)
+		return nil, false
 	}
-
-	rawURL := strings.TrimSpace(r.FormValue("url"))
-	if rawURL == "" {
-		render(pageData{Error: "Enter a URL to convert."})(w, r)
-		return
+	var urls []string
+	for _, line := range strings.Split(r.FormValue("urls"), "\n") {
+		if u := strings.TrimSpace(line); u != "" {
+			urls = append(urls, u)
+		}
 	}
-
-	result := convertLocation(r.Context(), rawURL, 0, optionsFromRequest(r))
-	render(pageData{Results: []conversionResult{result}})(w, r)
+	if len(urls) == 0 {
+		render(pageData{Error: "Enter at least one URL to convert."})(w, r)
+		return nil, false
+	}
+	return urls, true
 }
 
 func uploadedFiles(w http.ResponseWriter, r *http.Request) ([]*multipart.FileHeader, bool) {
