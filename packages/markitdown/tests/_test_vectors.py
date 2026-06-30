@@ -153,6 +153,9 @@ GENERAL_TEST_VECTORS = [
             "**Employment type:** Full-time",
             "We are looking for a Senior Backend Engineer",
             "Build and maintain high-throughput REST and gRPC APIs.",
+            "## Requirements added by the job poster",
+            "- Python",
+            "- Docker",
         ],
         must_not_include=[
             "People also viewed",

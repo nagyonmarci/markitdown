@@ -132,6 +132,22 @@ class LinkedInJobConverter(DocumentConverter):
         if criteria_lines:
             parts.append("## Job criteria\n\n" + "\n".join(criteria_lines))
 
+        # Requirements added by the job poster (optional structured section)
+        req_heading = soup.find(
+            ["h2", "h3"],
+            string=re.compile(r"requirements added by the job poster", re.I),
+        )
+        if req_heading:
+            req_list = req_heading.find_next("ul")
+            if req_list:
+                items = [_clean_text(li) for li in req_list.find_all("li")]
+                items = [i for i in items if i]
+                if items:
+                    parts.append(
+                        "## Requirements added by the job poster\n\n"
+                        + "\n".join(f"- {i}" for i in items)
+                    )
+
         # Description body -- markdownify to preserve lists, bold, links, etc.
         description_md = (
             _CustomMarkdownify(**kwargs).convert_soup(description_elm).strip()
