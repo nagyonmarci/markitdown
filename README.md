@@ -7,13 +7,14 @@
 
 > This is a fork of [**microsoft/markitdown**](https://github.com/microsoft/markitdown) — a lightweight Python utility for converting files (PDF, Office documents, images, audio, HTML, and more) to Markdown for use with LLMs and text-analysis pipelines.
 >
-> **The core conversion library is unchanged.** For installation, supported formats, the command-line and Python APIs, plugins, and the Azure Document Intelligence / Content Understanding integrations, see the **[upstream README »](https://github.com/microsoft/markitdown#readme)**.
+> **The core conversion library is largely unchanged** — this fork adds a LinkedIn job-posting converter on top. For installation, supported formats, the command-line and Python APIs, plugins, and the Azure Document Intelligence / Content Understanding integrations, see the **[upstream README »](https://github.com/microsoft/markitdown#readme)**.
 
 ## What this fork adds
 
 This fork focuses on **shipping and operating** MarkItDown rather than on the conversion library itself:
 
-- **[Web Frontend](#web-frontend)** — a self-contained Go web UI that exposes the full MarkItDown CLI over HTTP, with batch file upload, URL/YouTube conversion, and ZIP export.
+- **[LinkedIn Job Converter](#linkedin-job-converter)** — a dedicated converter for LinkedIn job-posting pages (`linkedin.com/jobs/view/…`) that strips navigation, sign-in prompts, and sidebar noise, extracting title, company, location, job criteria, description, and — when present — the "Requirements added by the job poster" section.
+- **[Web Frontend](#web-frontend)** — a self-contained Go web UI that exposes the full MarkItDown CLI over HTTP, with batch file upload, multi-URL conversion, ZIP export, and merge-to-one.
 - **[DevSecOps Pipeline](#devsecops-pipeline)** — a hardened, shift-left CI/CD pipeline with parallel security scanning, build gating, keyless image signing, and SBOM attestation.
 - **[`markitdown-ocr` plugin](packages/markitdown-ocr/README.md)** — LLM-vision OCR for images embedded in PDF, DOCX, PPTX, and XLSX files, reusing the same `llm_client` / `llm_model` pattern MarkItDown already uses for image descriptions.
 
@@ -32,6 +33,12 @@ The CI/CD pipeline also publishes a signed CLI image to the GitHub Container Reg
 ```sh
 docker run --rm -i ghcr.io/nagyonmarci/markitdown:latest < ~/your-file.pdf > output.md
 ```
+
+---
+
+## LinkedIn Job Converter
+
+LinkedIn's public job-posting pages wrap the actual job description in a sea of navigation, sign-in prompts, cookie banners, "People also viewed" widgets, and sidebar links. The built-in `LinkedInJobConverter` activates automatically for any URL matching `linkedin.com/jobs/view/…` and extracts only the content that matters: title, company, location, posting date, applicant count, job criteria (seniority, employment type, function, industry), the description body, and — when present — the structured "Requirements added by the job poster" checklist. Everything else is dropped. The converter uses heading-text search rather than brittle CSS class selectors, so it stays robust against LinkedIn DOM changes.
 
 ---
 
@@ -68,10 +75,12 @@ go build -o markitdown-frontend .
 - Results are displayed inline in editable text areas
 - Per-result **Copy** and **Save** buttons, plus a **Copy all** button for batch workflows
 - **Download ZIP** — packages all converted Markdown files into a single archive in one click
+- **Merge into one** — combines all converted files into a single Markdown document with a table of contents
 
 **URL conversion**
-- Paste any URL to convert a remote HTML page, document, or feed directly
+- Paste one or more URLs (one per line) to convert remote HTML pages, documents, or feeds directly
 - **YouTube support** — YouTube URLs are handled via a dedicated path: `yt-dlp` fetches video metadata (title, channel, duration, description) and English subtitles, which are assembled into a structured Markdown document with a transcript section
+- **Merge into one** — combines all URL results into a single Markdown document with a table of contents
 
 **Advanced options** (available for both file and URL modes)
 - Extension hint — override the file type detected by MarkItDown
