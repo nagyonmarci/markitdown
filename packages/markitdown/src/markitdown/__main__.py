@@ -2,9 +2,11 @@
 #
 # SPDX-License-Identifier: MIT
 import argparse
+import re
 import sys
 import codecs
-from typing import Any, Dict
+from pathlib import Path
+from typing import Any, Dict, List, Tuple
 from textwrap import dedent
 from importlib.metadata import entry_points
 from .__about__ import __version__
@@ -138,7 +140,13 @@ def main():
         help="Keep data URIs (like base64-encoded images) in the output. By default, data URIs are truncated.",
     )
 
-    parser.add_argument("filename", nargs="?")
+    parser.add_argument(
+        "--merge",
+        action="store_true",
+        help="Merge multiple input files into one Markdown document with a table of contents.",
+    )
+
+    parser.add_argument("filename", nargs="*")
     args = parser.parse_args()
 
     # Parse the extension hint
@@ -205,7 +213,7 @@ def main():
             _exit_with_error(
                 "Document Intelligence Endpoint is required when using Document Intelligence."
             )
-        elif args.filename is None:
+        elif not args.filename:
             _exit_with_error("Filename is required when using Document Intelligence.")
 
         markitdown = MarkItDown(
@@ -216,7 +224,7 @@ def main():
             _exit_with_error(
                 "Content Understanding Endpoint (--cu-endpoint) is required when using --use-cu."
             )
-        elif args.filename is None:
+        elif not args.filename:
             _exit_with_error("Filename is required when using Content Understanding.")
 
         cu_kwargs: Dict[str, Any] = {
@@ -244,18 +252,28 @@ def main():
     else:
         markitdown = MarkItDown(enable_plugins=args.use_plugins)
 
-    if args.filename is None:
+    if not args.filename:
         result = markitdown.convert_stream(
             sys.stdin.buffer,
             stream_info=stream_info,
             keep_data_uris=args.keep_data_uris,
         )
-    else:
+        _handle_output(args, result)
+    elif len(args.filename) == 1:
         result = markitdown.convert(
-            args.filename, stream_info=stream_info, keep_data_uris=args.keep_data_uris
+            args.filename[0], stream_info=stream_info, keep_data_uris=args.keep_data_uris
         )
-
-    _handle_output(args, result)
+        _handle_output(args, result)
+    elif args.merge:
+        results = [
+            (f, markitdown.convert(f, stream_info=stream_info, keep_data_uris=args.keep_data_uris))
+            for f in args.filename
+        ]
+        _handle_output(args, _merge_results(results))
+    else:
+        _exit_with_error(
+            "Multiple files given without --merge. Use --merge to combine them into one document."
+        )
 
 
 def _handle_output(args, result: DocumentConverterResult):
@@ -270,6 +288,24 @@ def _handle_output(args, result: DocumentConverterResult):
                 sys.stdout.encoding
             )
         )
+
+
+def _merge_results(
+    items: List[Tuple[str, DocumentConverterResult]],
+) -> DocumentConverterResult:
+    def _anchor(name: str) -> str:
+        s = re.sub(r"[^\w\s-]", "", name.lower())
+        return re.sub(r"\s+", "-", s).strip("-")
+
+    toc = ["## Table of Contents", ""]
+    sections = []
+    for path, result in items:
+        name = Path(path).name
+        toc.append(f"- [{name}](#{_anchor(name)})")
+        sections.append(f"## {name}\n\n{result.markdown.strip()}")
+
+    merged = "\n".join(toc) + "\n\n---\n\n" + "\n\n---\n\n".join(sections) + "\n"
+    return DocumentConverterResult(markdown=merged)
 
 
 def _exit_with_error(message: str):
