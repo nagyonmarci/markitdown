@@ -273,6 +273,7 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
       <div class="actions">
         <button type="submit">Convert</button>
         <button type="submit" class="secondary" formaction="/convert.zip">Download ZIP</button>
+        <button type="submit" class="secondary" formaction="/convert.merged">Merge into one</button>
       </div>
     </form>
 
@@ -366,6 +367,7 @@ func main() {
 	mux.HandleFunc("GET /", render(pageData{}))
 	mux.HandleFunc("POST /convert", convert)
 	mux.HandleFunc("POST /convert.zip", convertZip)
+	mux.HandleFunc("POST /convert.merged", convertMerged)
 	mux.HandleFunc("POST /convert-url", convertURL)
 
 	server := &http.Server{
@@ -456,6 +458,54 @@ func convertZip(w http.ResponseWriter, r *http.Request) {
 	if _, err := w.Write(archive.Bytes()); err != nil {
 		log.Printf("write ZIP response: %v", err)
 	}
+}
+
+func convertMerged(w http.ResponseWriter, r *http.Request) {
+	headers, ok := uploadedFiles(w, r)
+	if !ok {
+		return
+	}
+	options := optionsFromRequest(r)
+	results := make([]conversionResult, 0, len(headers))
+	for index, header := range headers {
+		results = append(results, convertFile(r.Context(), header, index, options))
+	}
+	render(pageData{Results: []conversionResult{mergeResults(results)}})(w, r)
+}
+
+func mergeResults(results []conversionResult) conversionResult {
+	var toc, body strings.Builder
+	toc.WriteString("## Table of Contents\n\n")
+	first := true
+	for _, r := range results {
+		if r.Error != "" {
+			continue
+		}
+		fmt.Fprintf(&toc, "- [%s](#%s)\n", r.FileName, toAnchor(r.FileName))
+		if !first {
+			body.WriteString("\n\n---\n\n")
+		}
+		fmt.Fprintf(&body, "## %s\n\n%s", r.FileName, strings.TrimSpace(r.Markdown))
+		first = false
+	}
+	return conversionResult{
+		ID:           "result-0",
+		FileName:     "merged.md",
+		DownloadName: "merged.md",
+		Markdown:     toc.String() + "\n---\n\n" + body.String() + "\n",
+	}
+}
+
+func toAnchor(name string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(name) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' {
+			b.WriteRune(r)
+		} else if r == ' ' || r == '-' {
+			b.WriteRune('-')
+		}
+	}
+	return strings.Trim(b.String(), "-")
 }
 
 func convertURL(w http.ResponseWriter, r *http.Request) {
