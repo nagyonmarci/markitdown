@@ -261,12 +261,19 @@ def main():
         _handle_output(args, result)
     elif len(args.filename) == 1:
         result = markitdown.convert(
-            args.filename[0], stream_info=stream_info, keep_data_uris=args.keep_data_uris
+            args.filename[0],
+            stream_info=stream_info,
+            keep_data_uris=args.keep_data_uris,
         )
         _handle_output(args, result)
     elif args.merge:
         results = [
-            (f, markitdown.convert(f, stream_info=stream_info, keep_data_uris=args.keep_data_uris))
+            (
+                f,
+                markitdown.convert(
+                    f, stream_info=stream_info, keep_data_uris=args.keep_data_uris
+                ),
+            )
             for f in args.filename
         ]
         _handle_output(args, _merge_results(results))
