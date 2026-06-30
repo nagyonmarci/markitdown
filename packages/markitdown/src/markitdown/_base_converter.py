@@ -24,16 +24,6 @@ class DocumentConverterResult:
         self.markdown = markdown
         self.title = title
 
-    @property
-    def text_content(self) -> str:
-        """Soft-deprecated alias for `markdown`. New code should migrate to using `markdown` or __str__."""
-        return self.markdown
-
-    @text_content.setter
-    def text_content(self, markdown: str):
-        """Soft-deprecated alias for `markdown`. New code should migrate to using `markdown` or __str__."""
-        self.markdown = markdown
-
     def __str__(self) -> str:
         """Return the converted Markdown text."""
         return self.markdown

@@ -5,9 +5,9 @@ import sys
 import shutil
 import traceback
 import io
-from dataclasses import dataclass
+import warnings
 from importlib.metadata import entry_points
-from typing import Any, List, Dict, Optional, Union, BinaryIO
+from typing import Any, List, Dict, Optional, Union, BinaryIO, NamedTuple
 from pathlib import Path
 from urllib.parse import urlparse
 from warnings import warn
@@ -84,8 +84,16 @@ def _load_plugins() -> Union[None, List[Any]]:
     return _plugins
 
 
-@dataclass(kw_only=True, frozen=True)
-class ConverterRegistration:
+def _normalize_charset(charset: str | None) -> str | None:
+    if charset is None:
+        return None
+    try:
+        return codecs.lookup(charset).name
+    except LookupError:
+        return charset
+
+
+class ConverterRegistration(NamedTuple):
     """A registration of a converter with its priority and other metadata."""
 
     converter: DocumentConverter
@@ -209,45 +217,29 @@ class MarkItDown:
             # Register Document Intelligence converter at the top of the stack if endpoint is provided
             docintel_endpoint = kwargs.get("docintel_endpoint")
             if docintel_endpoint is not None:
-                docintel_args: Dict[str, Any] = {}
-                docintel_args["endpoint"] = docintel_endpoint
-
-                docintel_credential = kwargs.get("docintel_credential")
-                if docintel_credential is not None:
-                    docintel_args["credential"] = docintel_credential
-
-                docintel_types = kwargs.get("docintel_file_types")
-                if docintel_types is not None:
-                    docintel_args["file_types"] = docintel_types
-
-                docintel_version = kwargs.get("docintel_api_version")
-                if docintel_version is not None:
-                    docintel_args["api_version"] = docintel_version
-
                 self.register_converter(
-                    DocumentIntelligenceConverter(**docintel_args),
+                    DocumentIntelligenceConverter(
+                        endpoint=docintel_endpoint,
+                        **{k: kwargs[kw] for k, kw in [
+                            ("credential", "docintel_credential"),
+                            ("file_types", "docintel_file_types"),
+                            ("api_version", "docintel_api_version"),
+                        ] if kw in kwargs and kwargs[kw] is not None},
+                    ),
                 )
 
             # Register Content Understanding converter at the top of the stack if endpoint is provided
             cu_endpoint = kwargs.get("cu_endpoint")
             if cu_endpoint is not None:
-                cu_args: Dict[str, Any] = {}
-                cu_args["endpoint"] = cu_endpoint
-
-                cu_credential = kwargs.get("cu_credential")
-                if cu_credential is not None:
-                    cu_args["credential"] = cu_credential
-
-                cu_analyzer_id = kwargs.get("cu_analyzer_id")
-                if cu_analyzer_id is not None:
-                    cu_args["analyzer_id"] = cu_analyzer_id
-
-                cu_file_types = kwargs.get("cu_file_types")
-                if cu_file_types is not None:
-                    cu_args["file_types"] = cu_file_types
-
                 self.register_converter(
-                    ContentUnderstandingConverter(**cu_args),
+                    ContentUnderstandingConverter(
+                        endpoint=cu_endpoint,
+                        **{k: kwargs[kw] for k, kw in [
+                            ("credential", "cu_credential"),
+                            ("analyzer_id", "cu_analyzer_id"),
+                            ("file_types", "cu_file_types"),
+                        ] if kw in kwargs and kwargs[kw] is not None},
+                    ),
                 )
 
             self._builtins_enabled = True
@@ -417,8 +409,12 @@ class MarkItDown:
         mock_url: Optional[str] = None,
         **kwargs: Any,
     ) -> DocumentConverterResult:
-        """Alias for convert_uri()"""
-        # convert_url will likely be deprecated in the future in favor of convert_uri
+        """Deprecated alias for convert_uri()."""
+        warnings.warn(
+            "convert_url() is deprecated, use convert_uri() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.convert_uri(
             url,
             stream_info=stream_info,
@@ -576,42 +572,34 @@ class MarkItDown:
         # Remember the initial stream position so that we can return to it
         cur_pos = file_stream.tell()
 
+        # Merge globals once before the loop rather than per-converter per-guess
+        _base_kwargs = {**kwargs}
+        if "llm_client" not in _base_kwargs and self._llm_client is not None:
+            _base_kwargs["llm_client"] = self._llm_client
+        if "llm_model" not in _base_kwargs and self._llm_model is not None:
+            _base_kwargs["llm_model"] = self._llm_model
+        if "llm_prompt" not in _base_kwargs and self._llm_prompt is not None:
+            _base_kwargs["llm_prompt"] = self._llm_prompt
+        if "style_map" not in _base_kwargs and self._style_map is not None:
+            _base_kwargs["style_map"] = self._style_map
+        if "exiftool_path" not in _base_kwargs and self._exiftool_path is not None:
+            _base_kwargs["exiftool_path"] = self._exiftool_path
+
         for stream_info in stream_info_guesses + [StreamInfo()]:
+            # Add legacy kwargs that vary per guess
+            _kwargs = {**_base_kwargs}
+            if stream_info is not None:
+                if stream_info.extension is not None:
+                    _kwargs["file_extension"] = stream_info.extension
+                if stream_info.url is not None:
+                    _kwargs["url"] = stream_info.url
+
             for converter_registration in sorted_registrations:
                 converter = converter_registration.converter
                 # Sanity check -- make sure the cur_pos is still the same
                 assert (
                     cur_pos == file_stream.tell()
                 ), "File stream position should NOT change between guess iterations"
-
-                _kwargs = {k: v for k, v in kwargs.items()}
-
-                # Copy any additional global options
-                if "llm_client" not in _kwargs and self._llm_client is not None:
-                    _kwargs["llm_client"] = self._llm_client
-
-                if "llm_model" not in _kwargs and self._llm_model is not None:
-                    _kwargs["llm_model"] = self._llm_model
-
-                if "llm_prompt" not in _kwargs and self._llm_prompt is not None:
-                    _kwargs["llm_prompt"] = self._llm_prompt
-
-                if "style_map" not in _kwargs and self._style_map is not None:
-                    _kwargs["style_map"] = self._style_map
-
-                if "exiftool_path" not in _kwargs and self._exiftool_path is not None:
-                    _kwargs["exiftool_path"] = self._exiftool_path
-
-                # Add the list of converters for nested processing
-                _kwargs["_parent_converters"] = self._converters
-
-                # Add legaxy kwargs
-                if stream_info is not None:
-                    if stream_info.extension is not None:
-                        _kwargs["file_extension"] = stream_info.extension
-
-                    if stream_info.url is not None:
-                        _kwargs["url"] = stream_info.url
 
                 # Check if the converter will accept the file, and if so, try to convert it
                 _accepts = False
@@ -640,10 +628,10 @@ class MarkItDown:
 
                 if res is not None:
                     # Normalize the content
-                    res.text_content = "\n".join(
-                        [line.rstrip() for line in re.split(r"\r?\n", res.text_content)]
+                    res.markdown = "\n".join(
+                        [line.rstrip() for line in re.split(r"\r?\n", res.markdown)]
                     )
-                    res.text_content = re.sub(r"\n{3,}", "\n\n", res.text_content)
+                    res.markdown = re.sub(r"\n{3,}", "\n\n", res.markdown)
                     return res
 
         # If we got this far without success, report any exceptions
@@ -734,7 +722,7 @@ class MarkItDown:
                     charset_result = charset_normalizer.from_bytes(stream_page).best()
 
                     if charset_result is not None:
-                        charset = self._normalize_charset(charset_result.encoding)
+                        charset = _normalize_charset(charset_result.encoding)
 
                 # Normalize the first extension listed
                 guessed_extension = None
@@ -758,21 +746,17 @@ class MarkItDown:
 
                 if (
                     base_guess.charset is not None
-                    and self._normalize_charset(base_guess.charset) != charset
+                    and _normalize_charset(base_guess.charset) != charset
                 ):
                     compatible = False
 
                 if compatible:
                     # Add the compatible base guess
                     guesses.append(
-                        StreamInfo(
-                            mimetype=base_guess.mimetype
-                            or result.prediction.output.mime_type,
+                        base_guess.copy_and_update(
+                            mimetype=base_guess.mimetype or result.prediction.output.mime_type,
                             extension=base_guess.extension or guessed_extension,
                             charset=base_guess.charset or charset,
-                            filename=base_guess.filename,
-                            local_path=base_guess.local_path,
-                            url=base_guess.url,
                         )
                     )
                 else:
@@ -796,13 +780,3 @@ class MarkItDown:
 
         return guesses
 
-    def _normalize_charset(self, charset: str | None) -> str | None:
-        """
-        Normalize a charset string to a canonical form.
-        """
-        if charset is None:
-            return None
-        try:
-            return codecs.lookup(charset).name
-        except LookupError:
-            return charset

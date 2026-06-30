@@ -1,3 +1,4 @@
+from collections import namedtuple
 from typing import Optional, List, Any
 
 MISSING_DEPENDENCY_MESSAGE = """{converter} recognized the input as a potential {extension} file, but the dependencies needed to read {extension} files have not been installed. To resolve this error, include the optional dependency [{feature}] or [all] when installing MarkItDown. For example:
@@ -39,14 +40,9 @@ class UnsupportedFormatException(MarkItDownException):
     pass
 
 
-class FailedConversionAttempt(object):
-    """
-    Represents an a single attempt to convert a file.
-    """
-
-    def __init__(self, converter: Any, exc_info: Optional[tuple] = None):
-        self.converter = converter
-        self.exc_info = exc_info
+FailedConversionAttempt = namedtuple(
+    "FailedConversionAttempt", ["converter", "exc_info"], defaults=[None]
+)
 
 
 class FileConversionException(MarkItDownException):
