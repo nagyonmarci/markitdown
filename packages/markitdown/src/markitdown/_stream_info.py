@@ -17,13 +17,14 @@ class StreamInfo:
     local_path: Optional[str] = None  # If read from disk
     url: Optional[str] = None  # If read from url
 
-    def copy_and_update(self, other: Optional["StreamInfo"] = None, **kwargs):
+    def copy_and_update(self, *args, **kwargs):
         """Copy the StreamInfo object and update it with the given StreamInfo
         instance and/or other keyword arguments."""
         new_info = asdict(self)
 
-        if other is not None:
-            new_info.update({k: v for k, v in asdict(other).items() if v is not None})
+        for si in args:
+            assert isinstance(si, StreamInfo)
+            new_info.update({k: v for k, v in asdict(si).items() if v is not None})
 
         if kwargs:
             new_info.update(kwargs)
