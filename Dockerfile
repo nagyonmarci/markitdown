@@ -7,7 +7,9 @@ ENV FFMPEG_PATH=/usr/bin/ffmpeg
 # Runtime dependency. apt-get upgrade clears fixable OS-package CVEs so the
 # Trivy gate (--ignore-unfixed HIGH,CRITICAL) stays green.
 # hadolint ignore=DL3005
-RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     ffmpeg \
     exiftool
 
@@ -16,9 +18,6 @@ RUN if [ "$INSTALL_GIT" = "true" ]; then \
     apt-get install -y --no-install-recommends \
     git; \
     fi
-
-# Cleanup
-RUN rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY . /app

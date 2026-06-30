@@ -1,4 +1,3 @@
-import re
 import markdownify
 
 from typing import Any, Optional
@@ -31,7 +30,7 @@ class _CustomMarkdownify(markdownify.MarkdownConverter):
     ) -> str:
         """Same as usual, but be sure to start with a new line"""
         if not convert_as_inline:
-            if not re.search(r"^\n", text):
+            if not text.startswith("\n"):
                 return "\n" + super().convert_hn(n, el, text, convert_as_inline)  # type: ignore
 
         return super().convert_hn(n, el, text, convert_as_inline)  # type: ignore
