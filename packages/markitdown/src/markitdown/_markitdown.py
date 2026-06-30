@@ -220,11 +220,15 @@ class MarkItDown:
                 self.register_converter(
                     DocumentIntelligenceConverter(
                         endpoint=docintel_endpoint,
-                        **{k: kwargs[kw] for k, kw in [
-                            ("credential", "docintel_credential"),
-                            ("file_types", "docintel_file_types"),
-                            ("api_version", "docintel_api_version"),
-                        ] if kw in kwargs and kwargs[kw] is not None},
+                        **{
+                            k: kwargs[kw]
+                            for k, kw in [
+                                ("credential", "docintel_credential"),
+                                ("file_types", "docintel_file_types"),
+                                ("api_version", "docintel_api_version"),
+                            ]
+                            if kw in kwargs and kwargs[kw] is not None
+                        },
                     ),
                 )
 
@@ -234,11 +238,15 @@ class MarkItDown:
                 self.register_converter(
                     ContentUnderstandingConverter(
                         endpoint=cu_endpoint,
-                        **{k: kwargs[kw] for k, kw in [
-                            ("credential", "cu_credential"),
-                            ("analyzer_id", "cu_analyzer_id"),
-                            ("file_types", "cu_file_types"),
-                        ] if kw in kwargs and kwargs[kw] is not None},
+                        **{
+                            k: kwargs[kw]
+                            for k, kw in [
+                                ("credential", "cu_credential"),
+                                ("analyzer_id", "cu_analyzer_id"),
+                                ("file_types", "cu_file_types"),
+                            ]
+                            if kw in kwargs and kwargs[kw] is not None
+                        },
                     ),
                 )
 
@@ -754,7 +762,8 @@ class MarkItDown:
                     # Add the compatible base guess
                     guesses.append(
                         base_guess.copy_and_update(
-                            mimetype=base_guess.mimetype or result.prediction.output.mime_type,
+                            mimetype=base_guess.mimetype
+                            or result.prediction.output.mime_type,
                             extension=base_guess.extension or guessed_extension,
                             charset=base_guess.charset or charset,
                         )
@@ -779,4 +788,3 @@ class MarkItDown:
             file_stream.seek(cur_pos)
 
         return guesses
-
