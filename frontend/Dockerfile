@@ -1,27 +1,24 @@
-FROM golang:1.23-bookworm@sha256:167053a2bb901972bf2c1611f8f52c44d5fe7e762e5cab213708d82c421614db AS builder
+FROM golang:1.26-bookworm@sha256:b305420a68d0f229d91eb3b3ed9e519fcf2cf5461da4bef997bf927e8c0bfd2b AS builder
 
 WORKDIR /src
 COPY frontend/go.mod ./go.mod
 COPY frontend/main.go ./main.go
 RUN CGO_ENABLED=0 go build -o /markitdown-frontend .
 
-FROM python:3.13-slim-trixie@sha256:b04b5d7233d2ad9c379e22ea8927cd1378cd15c60d4ef876c065b25ea8fb3bf3
+FROM cgr.dev/chainguard/python:latest-dev@sha256:90555ca52ffe2163ec7db49a8d8ee738f6e1c31e50729ee2c05cd4ad5f6ce043
 
-ENV DEBIAN_FRONTEND=noninteractive
-ENV EXIFTOOL_PATH=/usr/bin/exiftool
 ENV FFMPEG_PATH=/usr/bin/ffmpeg
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
-    exiftool \
-    && rm -rf /var/lib/apt/lists/*
+USER root
+RUN apk add --no-cache ffmpeg
 
 WORKDIR /app
 COPY packages/markitdown /app/packages/markitdown
 RUN pip --no-cache-dir install /app/packages/markitdown[all]
-RUN pip --no-cache-dir install yt-dlp==2026.3.17
+RUN pip --no-cache-dir install yt-dlp==2026.6.9
 
 COPY --from=builder /markitdown-frontend /usr/local/bin/markitdown-frontend
 
+USER nonroot
 EXPOSE 8080
 ENTRYPOINT ["markitdown-frontend"]
