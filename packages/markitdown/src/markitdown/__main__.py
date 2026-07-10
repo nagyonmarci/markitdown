@@ -146,6 +146,30 @@ def main():
         help="Merge multiple input files into one Markdown document with a table of contents.",
     )
 
+    parser.add_argument(
+        "--llm-model",
+        type=str,
+        help="Model name to use for LLM-based image captioning (e.g., gpt-4o). Requires the 'openai' package.",
+    )
+
+    parser.add_argument(
+        "--llm-endpoint",
+        type=str,
+        help="Base URL of an OpenAI-compatible API to use for image captioning. Defaults to OpenAI's API.",
+    )
+
+    parser.add_argument(
+        "--llm-api-key",
+        type=str,
+        help="API key for the image captioning endpoint. Defaults to the OPENAI_API_KEY environment variable.",
+    )
+
+    parser.add_argument(
+        "--llm-prompt",
+        type=str,
+        help="Custom prompt to use for LLM-based image captioning.",
+    )
+
     parser.add_argument("filename", nargs="*")
     args = parser.parse_args()
 
@@ -208,6 +232,24 @@ def main():
             )
         sys.exit(0)
 
+    llm_kwargs: Dict[str, Any] = {}
+    if args.llm_model:
+        try:
+            from openai import OpenAI
+        except ImportError:
+            _exit_with_error(
+                "The 'openai' package is required for --llm-model. Install it with `pip install openai`."
+            )
+        client_kwargs: Dict[str, Any] = {}
+        if args.llm_endpoint:
+            client_kwargs["base_url"] = args.llm_endpoint
+        if args.llm_api_key:
+            client_kwargs["api_key"] = args.llm_api_key
+        llm_kwargs["llm_client"] = OpenAI(**client_kwargs)
+        llm_kwargs["llm_model"] = args.llm_model
+        if args.llm_prompt:
+            llm_kwargs["llm_prompt"] = args.llm_prompt
+
     if args.use_docintel:
         if args.endpoint is None:
             _exit_with_error(
@@ -217,7 +259,9 @@ def main():
             _exit_with_error("Filename is required when using Document Intelligence.")
 
         markitdown = MarkItDown(
-            enable_plugins=args.use_plugins, docintel_endpoint=args.endpoint
+            enable_plugins=args.use_plugins,
+            docintel_endpoint=args.endpoint,
+            **llm_kwargs,
         )
     elif args.use_cu:
         if args.cu_endpoint is None:
@@ -248,9 +292,11 @@ def main():
                     _exit_with_error(f"Unknown file type: {name}")
             cu_kwargs["cu_file_types"] = cu_types
 
-        markitdown = MarkItDown(enable_plugins=args.use_plugins, **cu_kwargs)
+        markitdown = MarkItDown(
+            enable_plugins=args.use_plugins, **cu_kwargs, **llm_kwargs
+        )
     else:
-        markitdown = MarkItDown(enable_plugins=args.use_plugins)
+        markitdown = MarkItDown(enable_plugins=args.use_plugins, **llm_kwargs)
 
     if not args.filename:
         result = markitdown.convert_stream(
