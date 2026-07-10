@@ -609,6 +609,7 @@ func convertFile(requestContext context.Context, header *multipart.FileHeader, i
 	var stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, "markitdown", commandArgs(tmp.Name(), options)...)
 	cmd.Stderr = &stderr
+	withLLMEnv(cmd)
 	output, err := cmd.Output()
 	if err != nil {
 		result.Error = "Conversion failed."
@@ -620,6 +621,14 @@ func convertFile(requestContext context.Context, header *multipart.FileHeader, i
 
 	result.Markdown = string(output)
 	return result
+}
+
+// withLLMEnv passes the LLM API key via the environment instead of argv, so it
+// doesn't show up in the process list (e.g. `ps aux`) of the markitdown subprocess.
+func withLLMEnv(cmd *exec.Cmd) {
+	if apiKey := os.Getenv("MARKITDOWN_LLM_API_KEY"); apiKey != "" {
+		cmd.Env = append(os.Environ(), "OPENAI_API_KEY="+apiKey)
+	}
 }
 
 func convertLocation(requestContext context.Context, location string, index int, options conversionOptions) conversionResult {
@@ -639,6 +648,7 @@ func convertLocation(requestContext context.Context, location string, index int,
 	var stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, "markitdown", commandArgs(location, options)...)
 	cmd.Stderr = &stderr
+	withLLMEnv(cmd)
 	output, err := cmd.Output()
 	if err != nil {
 		result.Error = "Conversion failed."
@@ -831,6 +841,16 @@ func commandArgs(location string, options conversionOptions) []string {
 	}
 	if options.KeepDataURIs {
 		args = append(args, "--keep-data-uris")
+	}
+	// ponytail: server-wide LLM image captioning config via env vars, no per-request UI needed yet
+	if model := os.Getenv("MARKITDOWN_LLM_MODEL"); model != "" {
+		args = append(args, "--llm-model", model)
+		if endpoint := os.Getenv("MARKITDOWN_LLM_ENDPOINT"); endpoint != "" {
+			args = append(args, "--llm-endpoint", endpoint)
+		}
+		if prompt := os.Getenv("MARKITDOWN_LLM_PROMPT"); prompt != "" {
+			args = append(args, "--llm-prompt", prompt)
+		}
 	}
 	return append(args, location)
 }
