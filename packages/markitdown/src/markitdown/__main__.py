@@ -146,6 +146,12 @@ def main():
         help="Merge multiple input files into one Markdown document with a table of contents.",
     )
 
+    parser.add_argument(
+        "--llm-model",
+        type=str,
+        help="LLM model to use for vision-based OCR (requires the markitdown-ocr plugin and --use-plugins). Reads credentials from the OPENAI_API_KEY environment variable.",
+    )
+
     parser.add_argument("filename", nargs="*")
     args = parser.parse_args()
 
@@ -208,6 +214,20 @@ def main():
             )
         sys.exit(0)
 
+    llm_kwargs: Dict[str, Any] = {}
+    if args.llm_model:
+        try:
+            import openai
+        except ImportError:
+            _exit_with_error(
+                "The openai package is required for --llm-model. Install markitdown-ocr[llm]."
+            )
+        try:
+            llm_kwargs["llm_client"] = openai.OpenAI()
+            llm_kwargs["llm_model"] = args.llm_model
+        except Exception as e:
+            _exit_with_error(f"Failed to create LLM client: {e}")
+
     if args.use_docintel:
         if args.endpoint is None:
             _exit_with_error(
@@ -217,7 +237,9 @@ def main():
             _exit_with_error("Filename is required when using Document Intelligence.")
 
         markitdown = MarkItDown(
-            enable_plugins=args.use_plugins, docintel_endpoint=args.endpoint
+            enable_plugins=args.use_plugins,
+            docintel_endpoint=args.endpoint,
+            **llm_kwargs,
         )
     elif args.use_cu:
         if args.cu_endpoint is None:
@@ -248,9 +270,11 @@ def main():
                     _exit_with_error(f"Unknown file type: {name}")
             cu_kwargs["cu_file_types"] = cu_types
 
-        markitdown = MarkItDown(enable_plugins=args.use_plugins, **cu_kwargs)
+        markitdown = MarkItDown(
+            enable_plugins=args.use_plugins, **cu_kwargs, **llm_kwargs
+        )
     else:
-        markitdown = MarkItDown(enable_plugins=args.use_plugins)
+        markitdown = MarkItDown(enable_plugins=args.use_plugins, **llm_kwargs)
 
     if not args.filename:
         result = markitdown.convert_stream(

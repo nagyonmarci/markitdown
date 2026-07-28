@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,11 +19,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 )
 
 const maxUploadSize = 50 << 20
+const defaultLLMModel = "gpt-4o"
 
 type pageData struct {
 	Results []conversionResult
@@ -34,6 +37,9 @@ type conversionOptions struct {
 	Extension    string
 	Charset      string
 	KeepDataURIs bool
+	LLMAPIKey    string
+	LLMBaseURL   string
+	LLMModel     string
 }
 
 type conversionResult struct {
@@ -58,6 +64,47 @@ type youtubeSubtitle struct {
 			Text string `json:"utf8"`
 		} `json:"segs"`
 	} `json:"events"`
+}
+
+type logEntry struct {
+	Time     time.Time
+	Duration time.Duration
+	Source   string // "file" | "url" | "youtube"
+	Name     string // uploaded filename, or the URL/location
+	Error    string // empty on success
+}
+
+type logStore struct {
+	mu      sync.Mutex
+	entries []logEntry
+}
+
+const maxLogEntries = 500
+
+func (s *logStore) Add(e logEntry) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.entries = append(s.entries, e)
+	if len(s.entries) > maxLogEntries {
+		s.entries = s.entries[len(s.entries)-maxLogEntries:]
+	}
+}
+
+func (s *logStore) Snapshot() []logEntry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]logEntry, len(s.entries))
+	copy(out, s.entries)
+	return out
+}
+
+var conversionLog = &logStore{}
+
+type adminPageData struct {
+	Entries []logEntry
+	Total   int
+	Errors  int
+	Filter  string
 }
 
 var page = template.Must(template.New("page").Parse(`<!doctype html>
@@ -98,6 +145,13 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
     form {
       display: grid;
       gap: 16px;
+      padding: 20px;
+      border: 1px solid #d7dce2;
+      border-radius: 8px;
+      background: #ffffff;
+    }
+    .options-panel {
+      margin-bottom: 16px;
       padding: 20px;
       border: 1px solid #d7dce2;
       border-radius: 8px;
@@ -222,7 +276,7 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
       p {
         color: #a9b2bd;
       }
-      form, textarea {
+      form, textarea, .options-panel {
         background: #181d23;
         border-color: #313943;
       }
@@ -259,17 +313,23 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
       <p>Convert a local document to Markdown.</p>
     </header>
 
-    <form action="/convert" method="post" enctype="multipart/form-data">
-      <input name="files" type="file" multiple required>
+    <div class="options-panel">
       <details>
         <summary>Advanced options</summary>
-        <div class="advanced">
+        <div class="advanced" id="advanced-options">
           <label>Extension hint<input name="extension" type="text" placeholder="pdf"></label>
           <label>Charset<input name="charset" type="text" placeholder="utf-8"></label>
           <label class="checkbox"><input name="use_plugins" type="checkbox" value="1"> Use plugins</label>
           <label class="checkbox"><input name="keep_data_uris" type="checkbox" value="1"> Keep data URIs</label>
+          <label>LLM API key (for OCR)<input name="llm_api_key" type="password" autocomplete="off" placeholder="sk-... (blank for Ollama)"></label>
+          <label>LLM base URL<input name="llm_base_url" type="text" placeholder="http://host.docker.internal:11434/v1"></label>
+          <label>LLM model<input name="llm_model" type="text" placeholder="gpt-4o (or e.g. llava for Ollama)"></label>
         </div>
       </details>
+    </div>
+
+    <form action="/convert" method="post" enctype="multipart/form-data">
+      <input name="files" type="file" multiple required>
       <div class="actions">
         <button type="submit">Convert</button>
         <button type="submit" class="secondary" formaction="/convert.zip">Download ZIP</button>
@@ -279,15 +339,6 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
 
     <form action="/convert-url" method="post">
       <textarea name="urls" rows="4" placeholder="https://example.com/document.html&#10;https://other.com/page.html" required></textarea>
-      <details>
-        <summary>Advanced options</summary>
-        <div class="advanced">
-          <label>Extension hint<input name="extension" type="text" placeholder="html"></label>
-          <label>Charset<input name="charset" type="text" placeholder="utf-8"></label>
-          <label class="checkbox"><input name="use_plugins" type="checkbox" value="1"> Use plugins</label>
-          <label class="checkbox"><input name="keep_data_uris" type="checkbox" value="1"> Keep data URIs</label>
-        </div>
-      </details>
       <div class="actions">
         <button type="submit">Convert URLs</button>
         <button type="submit" class="secondary" formaction="/convert-url.merged">Merge into one</button>
@@ -316,6 +367,7 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
           {{end}}
         </div>
         {{if .Error}}<div class="file-error">{{.Error}}</div>{{end}}
+        {{if and (not .Error) (not .Markdown)}}<div class="file-error">No text could be extracted from this file.</div>{{end}}
         {{if .Markdown}}<textarea id="{{.ID}}" readonly>{{.Markdown}}</textarea>{{end}}
       </div>
       {{end}}
@@ -361,7 +413,142 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
         setTimeout(() => copyAllButton.textContent = "Copy all", 1200);
       });
     }
+
+    const advancedOptions = document.getElementById("advanced-options");
+    const persistedFields = ["llm_api_key", "llm_base_url", "llm_model"];
+    persistedFields.forEach((name) => {
+      const value = localStorage.getItem(name);
+      if (!value) return;
+      const el = advancedOptions.querySelector('[name="' + name + '"]');
+      if (el) el.value = value;
+    });
+
+    const advancedFieldNames = ["extension", "charset", "use_plugins", "keep_data_uris", "llm_api_key", "llm_base_url", "llm_model"];
+    document.querySelectorAll("form").forEach((form) => {
+      form.addEventListener("submit", () => {
+        persistedFields.forEach((name) => {
+          const el = advancedOptions.querySelector('[name="' + name + '"]');
+          if (el) localStorage.setItem(name, el.value);
+        });
+        advancedFieldNames.forEach((name) => {
+          const el = advancedOptions.querySelector('[name="' + name + '"]');
+          if (!el) return;
+          const value = el.type === "checkbox" ? (el.checked ? "1" : "") : el.value;
+          if (!value) return;
+          const hidden = document.createElement("input");
+          hidden.type = "hidden";
+          hidden.name = name;
+          hidden.value = value;
+          form.appendChild(hidden);
+        });
+      });
+    });
   </script>
+</body>
+</html>`))
+
+var adminPage = template.Must(template.New("admin").Parse(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MarkItDown Admin</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f6f7f9;
+      color: #20242a;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+    }
+    main {
+      width: min(1100px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 40px 0;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+    }
+    p.summary {
+      margin: 0 0 20px;
+      color: #5d6673;
+    }
+    p.summary a {
+      color: #106ebe;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      border: 1px solid #d7dce2;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #ffffff;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid #d7dce2;
+      font-size: 14px;
+      vertical-align: top;
+    }
+    th {
+      color: #404852;
+      font-weight: 600;
+    }
+    tr.error td {
+      color: #a4262c;
+    }
+    tr:last-child td {
+      border-bottom: 0;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        background: #111418;
+        color: #eef1f5;
+      }
+      p.summary {
+        color: #a9b2bd;
+      }
+      table {
+        background: #181d23;
+        border-color: #313943;
+      }
+      th, td {
+        border-color: #313943;
+      }
+      th {
+        color: #c6cdd6;
+      }
+      tr.error td {
+        color: #ffd7d4;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Conversion log</h1>
+    <p class="summary">
+      {{.Total}} shown, {{.Errors}} error(s).
+      {{if eq .Filter "errors"}}<a href="/admin">Show all</a>{{else}}<a href="/admin?filter=errors">Show errors only</a>{{end}}
+    </p>
+    <table>
+      <tr><th>Time</th><th>Duration</th><th>Source</th><th>Name</th><th>Status</th></tr>
+      {{range .Entries}}
+      <tr{{if .Error}} class="error"{{end}}>
+        <td>{{.Time.Format "2006-01-02 15:04:05"}}</td>
+        <td>{{.Duration}}</td>
+        <td>{{.Source}}</td>
+        <td>{{.Name}}</td>
+        <td>{{if .Error}}{{.Error}}{{else}}OK{{end}}</td>
+      </tr>
+      {{end}}
+    </table>
+  </main>
 </body>
 </html>`))
 
@@ -373,6 +560,7 @@ func main() {
 	mux.HandleFunc("POST /convert.merged", convertMerged)
 	mux.HandleFunc("POST /convert-url", convertURL)
 	mux.HandleFunc("POST /convert-url.merged", convertURLMerged)
+	mux.HandleFunc("GET /admin", requireAdminAuth(adminHandler))
 
 	server := &http.Server{
 		Addr:              ":8080",
@@ -390,6 +578,54 @@ func render(data pageData) http.HandlerFunc {
 		if err := page.Execute(w, data); err != nil {
 			log.Printf("render page: %v", err)
 		}
+	}
+}
+
+func requireAdminAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		password := os.Getenv("ADMIN_PASSWORD")
+		if password == "" {
+			http.Error(w, "admin disabled: ADMIN_PASSWORD not set", http.StatusServiceUnavailable)
+			return
+		}
+		user, pass, ok := r.BasicAuth()
+		if !ok || user != "admin" || subtle.ConstantTimeCompare([]byte(pass), []byte(password)) != 1 {
+			w.Header().Set("WWW-Authenticate", `Basic realm="admin"`)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	}
+}
+
+func adminHandler(w http.ResponseWriter, r *http.Request) {
+	entries := conversionLog.Snapshot()
+	for i, j := 0, len(entries)-1; i < j; i, j = i+1, j-1 {
+		entries[i], entries[j] = entries[j], entries[i]
+	}
+
+	errCount := 0
+	for _, e := range entries {
+		if e.Error != "" {
+			errCount++
+		}
+	}
+
+	filter := r.URL.Query().Get("filter")
+	if filter == "errors" {
+		filtered := entries[:0:0]
+		for _, e := range entries {
+			if e.Error != "" {
+				filtered = append(filtered, e)
+			}
+		}
+		entries = filtered
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	data := adminPageData{Entries: entries, Total: len(entries), Errors: errCount, Filter: filter}
+	if err := adminPage.Execute(w, data); err != nil {
+		log.Printf("render admin page: %v", err)
 	}
 }
 
@@ -572,8 +808,13 @@ func uploadedFiles(w http.ResponseWriter, r *http.Request) ([]*multipart.FileHea
 	return headers, true
 }
 
-func convertFile(requestContext context.Context, header *multipart.FileHeader, index int, options conversionOptions) conversionResult {
-	result := conversionResult{
+func convertFile(requestContext context.Context, header *multipart.FileHeader, index int, options conversionOptions) (result conversionResult) {
+	start := time.Now()
+	defer func() {
+		conversionLog.Add(logEntry{Time: start, Duration: time.Since(start), Source: "file", Name: header.Filename, Error: result.Error})
+	}()
+
+	result = conversionResult{
 		ID:           "result-" + strconv.Itoa(index),
 		FileName:     header.Filename,
 		DownloadName: markdownFileName(header.Filename),
@@ -608,6 +849,9 @@ func convertFile(requestContext context.Context, header *multipart.FileHeader, i
 
 	var stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, "markitdown", commandArgs(tmp.Name(), options)...)
+	if env := llmEnv(options); env != nil {
+		cmd.Env = env
+	}
 	cmd.Stderr = &stderr
 	output, err := cmd.Output()
 	if err != nil {
@@ -622,14 +866,21 @@ func convertFile(requestContext context.Context, header *multipart.FileHeader, i
 	return result
 }
 
-func convertLocation(requestContext context.Context, location string, index int, options conversionOptions) conversionResult {
-	result := conversionResult{
+func convertLocation(requestContext context.Context, location string, index int, options conversionOptions) (result conversionResult) {
+	start := time.Now()
+	source := "url"
+	defer func() {
+		conversionLog.Add(logEntry{Time: start, Duration: time.Since(start), Source: source, Name: location, Error: result.Error})
+	}()
+
+	result = conversionResult{
 		ID:           "result-" + strconv.Itoa(index),
 		FileName:     location,
 		DownloadName: markdownURLFileName(location),
 	}
 
 	if isYouTubeURL(location) {
+		source = "youtube"
 		return convertYouTube(requestContext, location, result)
 	}
 
@@ -638,6 +889,9 @@ func convertLocation(requestContext context.Context, location string, index int,
 
 	var stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, "markitdown", commandArgs(location, options)...)
+	if env := llmEnv(options); env != nil {
+		cmd.Env = env
+	}
 	cmd.Stderr = &stderr
 	output, err := cmd.Output()
 	if err != nil {
@@ -815,7 +1069,26 @@ func optionsFromRequest(r *http.Request) conversionOptions {
 		Extension:    strings.TrimSpace(r.FormValue("extension")),
 		Charset:      strings.TrimSpace(r.FormValue("charset")),
 		KeepDataURIs: r.FormValue("keep_data_uris") == "1",
+		LLMAPIKey:    strings.TrimSpace(r.FormValue("llm_api_key")),
+		LLMBaseURL:   strings.TrimSpace(r.FormValue("llm_base_url")),
+		LLMModel:     strings.TrimSpace(r.FormValue("llm_model")),
 	}
+}
+
+// A blank API key defaults to "ollama" — Ollama's OpenAI-compatible endpoint ignores it.
+func llmEnv(options conversionOptions) []string {
+	if options.LLMAPIKey == "" && options.LLMBaseURL == "" {
+		return nil
+	}
+	apiKey := options.LLMAPIKey
+	if apiKey == "" {
+		apiKey = "ollama"
+	}
+	env := append(os.Environ(), "OPENAI_API_KEY="+apiKey)
+	if options.LLMBaseURL != "" {
+		env = append(env, "OPENAI_BASE_URL="+options.LLMBaseURL)
+	}
+	return env
 }
 
 func commandArgs(location string, options conversionOptions) []string {
@@ -831,6 +1104,13 @@ func commandArgs(location string, options conversionOptions) []string {
 	}
 	if options.KeepDataURIs {
 		args = append(args, "--keep-data-uris")
+	}
+	if options.LLMAPIKey != "" || options.LLMBaseURL != "" || options.LLMModel != "" {
+		model := options.LLMModel
+		if model == "" {
+			model = defaultLLMModel
+		}
+		args = append(args, "--use-plugins", "--llm-model", model)
 	}
 	return append(args, location)
 }

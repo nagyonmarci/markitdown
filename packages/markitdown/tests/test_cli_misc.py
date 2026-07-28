@@ -1,4 +1,5 @@
 #!/usr/bin/env python3 -m pytest
+import os
 import subprocess
 from markitdown import __version__
 
@@ -27,8 +28,28 @@ def test_invalid_flag() -> None:
     assert "SYNTAX" in result.stderr, "Expected 'SYNTAX' to appear in STDERR"
 
 
+def test_llm_model_missing_api_key() -> None:
+    env = {k: v for k, v in os.environ.items() if k != "OPENAI_API_KEY"}
+    test_file = os.path.join(os.path.dirname(__file__), "test_files", "test.pdf")
+    result = subprocess.run(
+        ["python", "-m", "markitdown", "--llm-model", "gpt-4o", test_file],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert result.returncode != 0, f"CLI unexpectedly succeeded: {result.stdout}"
+    assert (
+        "Traceback" not in result.stderr
+    ), f"Expected a clean error message, got a traceback: {result.stderr}"
+    assert (
+        "Failed to create LLM client" in result.stderr
+    ), f"Expected a clean error message in STDERR: {result.stderr}"
+
+
 if __name__ == "__main__":
     """Runs this file's tests from the command line."""
     test_version()
     test_invalid_flag()
+    test_llm_model_missing_api_key()
     print("All tests passed!")

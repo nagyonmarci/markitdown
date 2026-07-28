@@ -15,6 +15,8 @@ RUN apk add --no-cache ffmpeg
 WORKDIR /app
 COPY packages/markitdown /app/packages/markitdown
 RUN pip --no-cache-dir install /app/packages/markitdown[all]
+COPY packages/markitdown-ocr /app/packages/markitdown-ocr
+RUN pip --no-cache-dir install /app/packages/markitdown-ocr[llm]
 RUN pip --no-cache-dir install yt-dlp==2026.6.9
 
 COPY --from=builder /markitdown-frontend /usr/local/bin/markitdown-frontend

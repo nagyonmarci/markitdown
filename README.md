@@ -87,17 +87,23 @@ go build -o markitdown-frontend .
 - Charset — specify the input encoding
 - Use plugins — enable installed third-party MarkItDown plugins
 - Keep data URIs — retain embedded base64 images in the output
+- LLM API key, base URL, model — enables LLM-vision OCR for scanned PDFs and embedded images (via the `markitdown-ocr` plugin); leave the API key blank and set a base URL (e.g. `http://host.docker.internal:11434/v1`) to use a local Ollama instance instead of OpenAI
 
 **UX details**
 - Fully responsive layout, works on mobile
 - System dark mode support via `prefers-color-scheme`
 - Zero JavaScript dependencies — vanilla JS, no bundler, no framework
+- LLM API key/base URL/model fields are remembered in the browser's `localStorage` between conversions (client-side only, never written to a cookie or server-side store)
 
 ### Architecture
 
 The frontend is a thin HTTP adapter over the `markitdown` CLI binary. It spawns a subprocess per request (`exec.CommandContext` with a 2-minute timeout), streams the output back to the browser, and handles errors gracefully. This design keeps the Go code simple and ensures the frontend stays in sync with the CLI automatically — no duplicated conversion logic.
 
-The multi-stage `frontend/Dockerfile` compiles the Go binary in a `golang:1.26` builder stage, then copies it into a [Chainguard Wolfi](https://edu.chainguard.dev/chainguard/chainguard-images/getting-started-python/) Python runtime image with the `markitdown` CLI (and `yt-dlp`) installed. Wolfi's minimal package set keeps the container surface near zero CVEs — `ffmpeg` is the only system package added at build time.
+The multi-stage `frontend/Dockerfile` compiles the Go binary in a `golang:1.26` builder stage, then copies it into a [Chainguard Wolfi](https://edu.chainguard.dev/chainguard/chainguard-images/getting-started-python/) Python runtime image with the `markitdown` CLI, the `markitdown-ocr[llm]` plugin (and `yt-dlp`) installed. Wolfi's minimal package set keeps the container surface near zero CVEs — `ffmpeg` is the only system package added at build time.
+
+### Admin
+
+`GET /admin` shows an in-memory log of every conversion attempt (success and failure) handled by the running process — up to the last 500, cleared on restart. It's protected by HTTP Basic Auth (username `admin`); set the `ADMIN_PASSWORD` environment variable to enable it. The endpoint returns `503` while `ADMIN_PASSWORD` is unset.
 
 ---
 
