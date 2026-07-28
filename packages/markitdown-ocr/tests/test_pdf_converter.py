@@ -30,7 +30,7 @@ TEST_DATA_DIR = Path(__file__).parent / "ocr_test_data"
 
 _MOCK_TEXT = "MOCK_OCR_TEXT_12345"
 _OCR_BLOCK = f"*[Image OCR]\n{_MOCK_TEXT}\n[End OCR]*"
-_PAGE_1_SCANNED = f"## Page 1\n\n\n\n\n{_OCR_BLOCK}"
+_PAGE_1_SCANNED = f"## Page 1\n\n\n{_OCR_BLOCK}"
 
 
 class MockOCRService:
@@ -182,9 +182,9 @@ def test_pdf_scanned_sales_report(svc: MockOCRService) -> None:
 
 def test_pdf_scanned_report(svc: MockOCRService) -> None:
     expected = (
-        f"{_PAGE_1_SCANNED}\n\n\n\n"
-        f"## Page 2\n\n\n\n\n{_OCR_BLOCK}\n\n\n\n"
-        f"## Page 3\n\n\n\n\n{_OCR_BLOCK}"
+        f"{_PAGE_1_SCANNED}\n\n\n"
+        f"## Page 2\n\n\n{_OCR_BLOCK}\n\n\n"
+        f"## Page 3\n\n\n{_OCR_BLOCK}"
     )
     assert _convert("pdf_scanned_report.pdf", svc) == expected
 
