@@ -42,9 +42,10 @@ def test_llm_model_missing_api_key() -> None:
     assert (
         "Traceback" not in result.stderr
     ), f"Expected a clean error message, got a traceback: {result.stderr}"
-    assert (
-        "Failed to create LLM client" in result.stderr
-    ), f"Expected a clean error message in STDERR: {result.stderr}"
+    assert "Failed to create LLM client" in result.stdout, (
+        "Expected a clean error message on STDOUT "
+        f"(stdout: {result.stdout!r}, stderr: {result.stderr!r})"
+    )
 
 
 if __name__ == "__main__":
